@@ -1,4 +1,4 @@
-<h1 align="center"/>⚡️ Welcome to GRE TUNNEL ⚡️</h1>
+<h1 align=""/>⚡️ Welcome to GRE TUNNEL ⚡️</h1>
 
 **GRE Tunnel • Built on Linux GRE Core**
 
