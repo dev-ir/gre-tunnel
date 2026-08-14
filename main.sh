@@ -1,4 +1,8 @@
 #!/bin/bash
+# DVHOST GRE Tunnel • Built on Linux GRE Core
+# Maintained by DVHOST.CLOUD
+# Version 1.1.0
+
 
 # ----------------- Colors -----------------
 RED='\033[0;31m'
@@ -12,6 +16,10 @@ SERVICE_NAME="gretunnel-connector.service"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
 CONNECTOR_SCRIPT="/root/gre-connector.sh"
 TUNNEL_NAME="gre0858"
+STATE_FILE="/etc/dvhost-gre.conf"
+BRAND_NAME="DVHOST.CLOUD"
+SCRIPT_NAME="DVHOST GRE Tunnel"
+VERSION="1.1.0"
 
 # ----------------- Root check -----------------
 if [[ $EUID -ne 0 ]]; then
@@ -73,6 +81,30 @@ get_tunnel_ipv4() {
             | cut -d/ -f1 \
             | head -n1
     fi
+}
+
+save_state() {
+    local role="$1" iran_ip="$2" kharej_ip="$3" subnet="$4"
+    cat > "$STATE_FILE" <<EOF_STATE
+ROLE="$role"
+IRAN_PUBLIC_IP="$iran_ip"
+KHAREJ_PUBLIC_IP="$kharej_ip"
+GRE_SUBNET="$subnet"
+TUNNEL_NAME="$TUNNEL_NAME"
+EOF_STATE
+    chmod 600 "$STATE_FILE"
+}
+
+load_state() {
+    [ -f "$STATE_FILE" ] || return 1
+    # shellcheck disable=SC1090
+    source "$STATE_FILE"
+    return 0
+}
+
+get_netplan_value() {
+    local key="$1"
+    awk -v key="$key" '$1 == key":" {print $2; exit}' "$NETPLAN_FILE" 2>/dev/null
 }
 
 create_service() {
@@ -179,13 +211,26 @@ gv_menu() {
         core_color="$RED"
     fi
 
+    local DISPLAY_ROLE="Not configured" DISPLAY_REMOTE="-"
+    if load_state 2>/dev/null; then
+        if [ "$ROLE" = "iran" ]; then
+            DISPLAY_ROLE="IRAN"
+            DISPLAY_REMOTE="$KHAREJ_PUBLIC_IP"
+        elif [ "$ROLE" = "kharej" ]; then
+            DISPLAY_ROLE="Kharej"
+            DISPLAY_REMOTE="$IRAN_PUBLIC_IP"
+        fi
+    fi
+
     echo "+-------------------------------------------------------------------------+"
-    echo "|                              GRE TUNNEL                                 |"
-    echo "|                                                       version :  1.0.0  |"
+    echo "|                         DVHOST GRE TUNNEL                               |"
+    printf "|  %-45s version : %-10s |\n" "$BRAND_NAME • Linux GRE Core" "$VERSION"
     echo "+-------------------------------------------------------------------------+"
     echo -e "|${GREEN}Server Country    |${NC} $SERVER_COUNTRY"
     echo -e "|${GREEN}Server ISP        |${NC} $SERVER_ISP"
     echo -e "|${GREEN}Server IP         |${NC} $SERVER_IP"
+    echo -e "|${GREEN}Tunnel Role       |${NC} $DISPLAY_ROLE"
+    echo -e "|${GREEN}Remote Public IP  |${NC} $DISPLAY_REMOTE"
     if [ -n "$TUN_IPV4" ]; then
         echo -e "|${GREEN}Tunnel IPv4       |${NC} $TUN_IPV4"
     fi
@@ -220,6 +265,40 @@ check_service_status() {
     systemctl --no-pager --full status "$SERVICE_NAME" 2>/dev/null | sed -n '1,15p'
     echo
     read -rp "Press Enter to go back to menu..."
+}
+
+restart_tunnel_service() {
+    gv_menu "| 4  - Restart GRE Service\n"
+
+    echo -e "${YELLOW}Applying netplan configuration...${NC}"
+    if ! apply_netplan_safe; then
+        echo -e "${RED}Failed to apply netplan. Service was not restarted.${NC}"
+        read -rp "Press Enter to return to menu..."
+        return 1
+    fi
+
+    echo -e "${YELLOW}Restarting $SERVICE_NAME...${NC}"
+    if systemctl restart "$SERVICE_NAME" 2>/dev/null; then
+        sleep 1
+        if systemctl is-active --quiet "$SERVICE_NAME"; then
+            echo -e "${GREEN}GRE service restarted successfully.${NC}"
+        else
+            echo -e "${RED}Service restarted but is not active.${NC}"
+        fi
+    else
+        echo -e "${RED}Failed to restart $SERVICE_NAME.${NC}"
+    fi
+
+    echo
+    if ip link show "$TUNNEL_NAME" &>/dev/null; then
+        echo -e "${GREEN}GRE Interface:${NC}"
+        ip -4 addr show dev "$TUNNEL_NAME" | sed -n '1,4p'
+    else
+        echo -e "${RED}GRE interface not found.${NC}"
+    fi
+
+    echo
+    read -rp "Press Enter to return to menu..."
 }
 
 setup_tunnel() {
@@ -258,20 +337,38 @@ setup_tunnel() {
     esac
 
     echo
-    echo "GRE internal subnet example: 10.50.100"
+    echo "GRE internal subnet examples: 10.50.100  |  10.50.100.0/30  |  10.50.100.1"
     echo "IRAN will use .1/30 and KHAREJ will use .2/30"
-    read -rp "Enter GRE subnet base (blank = auto): " subnet
+    read -rp "Enter GRE subnet/address (blank = auto): " subnet
 
     if [ -z "$subnet" ]; then
         subnet=$(generate_gre_subnet)
         echo -e "${YELLOW}Auto-generated GRE subnet:${NC} ${subnet}.0/30"
     else
+        # Accept: 10.50.100, 10.50.100.0/30, 10.50.100.1, 10.50.100.2
+        subnet="${subnet%/30}"
         subnet="${subnet%.}"
-        if ! [[ "$subnet" =~ ^([0-9]{1,3}\.){2}[0-9]{1,3}$ ]]; then
-            echo -e "${RED}Invalid subnet base. Example: 10.50.100${NC}"
+
+        if [[ "$subnet" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            IFS='.' read -r o1 o2 o3 o4 <<< "$subnet"
+            subnet="${o1}.${o2}.${o3}"
+        elif [[ "$subnet" =~ ^([0-9]{1,3}\.){2}[0-9]{1,3}$ ]]; then
+            :
+        else
+            echo -e "${RED}Invalid GRE subnet/address. Examples: 10.50.100 or 10.50.100.0/30${NC}"
             read -rp "Press Enter to return to menu..."
             return 1
         fi
+
+        # Validate the resulting three octets
+        IFS='.' read -r o1 o2 o3 <<< "$subnet"
+        for octet in "$o1" "$o2" "$o3"; do
+            if ! [[ "$octet" =~ ^[0-9]+$ ]] || (( octet < 0 || octet > 255 )); then
+                echo -e "${RED}Invalid GRE subnet/address.${NC}"
+                read -rp "Press Enter to return to menu..."
+                return 1
+            fi
+        done
     fi
 
     if [ "$role" = "iran" ]; then
@@ -308,6 +405,10 @@ EOF_NETPLAN
 
     cat > "$CONNECTOR_SCRIPT" <<EOF_CONNECTOR
 #!/bin/bash
+# DVHOST GRE Tunnel • Built on Linux GRE Core
+# Maintained by DVHOST.CLOUD
+# Version 1.1.0
+
 REMOTE_TUNNEL_IP="$remote_tunnel_ip"
 TUNNEL_NAME="$TUNNEL_NAME"
 
@@ -321,6 +422,7 @@ EOF_CONNECTOR
 
     chmod +x "$CONNECTOR_SCRIPT"
     create_service
+    save_state "$role" "$iran_ip" "$kharej_ip" "$subnet"
 
     echo
     echo -e "${GREEN}GRE tunnel configured successfully.${NC}"
@@ -331,6 +433,101 @@ EOF_CONNECTOR
     echo
     echo "$other_side_text: ${subnet}.0/30"
     echo -e "${YELLOW}Important:${NC} GRE uses IP protocol 47. Make sure it is allowed by both servers/provider firewalls."
+    echo
+    read -rp "Press Enter to return to menu..."
+}
+
+change_public_ips() {
+    gv_menu "| 5  - Change GRE Public IPs\n"
+
+    if [ ! -f "$NETPLAN_FILE" ]; then
+        echo -e "${RED}GRE tunnel is not configured.${NC}"
+        read -rp "Press Enter to return to menu..."
+        return 1
+    fi
+
+    local role iran_ip kharej_ip local_public remote_public current_local current_remote
+    local subnet current_internal
+
+    current_local=$(get_netplan_value "local")
+    current_remote=$(get_netplan_value "remote")
+    current_internal=$(awk '/addresses:/ {getline; gsub(/^[[:space:]]*-[[:space:]]*/, "", $0); print $0; exit}' "$NETPLAN_FILE" 2>/dev/null)
+
+    if load_state; then
+        role="$ROLE"
+        iran_ip="$IRAN_PUBLIC_IP"
+        kharej_ip="$KHAREJ_PUBLIC_IP"
+        subnet="$GRE_SUBNET"
+    else
+        echo -e "${YELLOW}Legacy configuration detected. Select this server role once:${NC}"
+        echo "1 - IRAN"
+        echo "2 - Kharej"
+        read -rp "Enter option number: " role_choice
+        case "$role_choice" in
+            1) role="iran"; iran_ip="$current_local"; kharej_ip="$current_remote" ;;
+            2) role="kharej"; iran_ip="$current_remote"; kharej_ip="$current_local" ;;
+            *) echo -e "${RED}Invalid option.${NC}"; sleep 1; return 1 ;;
+        esac
+        subnet=$(echo "$current_internal" | cut -d/ -f1 | awk -F. '{print $1"."$2"."$3}')
+    fi
+
+    echo
+    echo -e "${GREEN}Current IRAN Public IPv4   :${NC} $iran_ip"
+    echo -e "${GREEN}Current Kharej Public IPv4 :${NC} $kharej_ip"
+    echo -e "${GREEN}Internal GRE Address       :${NC} ${current_internal:-Unknown}"
+    echo
+
+    local new_iran new_kharej
+    read -rp "New IRAN Public IPv4   (Enter = keep): " new_iran
+    read -rp "New Kharej Public IPv4 (Enter = keep): " new_kharej
+
+    [ -z "$new_iran" ] && new_iran="$iran_ip"
+    [ -z "$new_kharej" ] && new_kharej="$kharej_ip"
+
+    if ! valid_ipv4 "$new_iran" || ! valid_ipv4 "$new_kharej"; then
+        echo -e "${RED}Invalid IPv4 address.${NC}"
+        read -rp "Press Enter to return to menu..."
+        return 1
+    fi
+
+    if [ "$role" = "iran" ]; then
+        local_public="$new_iran"
+        remote_public="$new_kharej"
+    else
+        local_public="$new_kharej"
+        remote_public="$new_iran"
+    fi
+
+    cp -f "$NETPLAN_FILE" "${NETPLAN_FILE}.bak" 2>/dev/null || true
+    sed -i -E "s|^([[:space:]]*local:[[:space:]]*).*$|\\1${local_public}|" "$NETPLAN_FILE"
+    sed -i -E "s|^([[:space:]]*remote:[[:space:]]*).*$|\\1${remote_public}|" "$NETPLAN_FILE"
+
+    echo
+    echo -e "${YELLOW}Applying new GRE endpoints...${NC}"
+    if ! apply_netplan_safe; then
+        echo -e "${RED}Failed to apply new IPs. Restoring previous configuration...${NC}"
+        [ -f "${NETPLAN_FILE}.bak" ] && mv -f "${NETPLAN_FILE}.bak" "$NETPLAN_FILE"
+        apply_netplan_safe >/dev/null 2>&1 || true
+        read -rp "Press Enter to return to menu..."
+        return 1
+    fi
+
+    rm -f "${NETPLAN_FILE}.bak"
+    save_state "$role" "$new_iran" "$new_kharej" "$subnet"
+
+    if systemctl cat "$SERVICE_NAME" &>/dev/null; then
+        systemctl restart "$SERVICE_NAME" 2>/dev/null || true
+    else
+        create_service
+    fi
+
+    echo
+    echo -e "${GREEN}GRE public IPs updated successfully.${NC}"
+    echo "--------------------------------------------"
+    echo "IRAN   Public IPv4 : $new_iran"
+    echo "Kharej Public IPv4 : $new_kharej"
+    echo "GRE Internal IPv4  : ${current_internal:-unchanged}"
+    echo "--------------------------------------------"
     echo
     read -rp "Press Enter to return to menu..."
 }
@@ -356,6 +553,7 @@ uninstall_tunnel() {
     remove_service
     [ -f "$NETPLAN_FILE" ] && rm -f "$NETPLAN_FILE"
     [ -f "$CONNECTOR_SCRIPT" ] && rm -f "$CONNECTOR_SCRIPT"
+    [ -f "$STATE_FILE" ] && rm -f "$STATE_FILE"
 
     netplan generate >/dev/null 2>&1 || true
     netplan apply >/dev/null 2>&1 || true
@@ -368,13 +566,15 @@ uninstall_tunnel() {
 }
 
 loader() {
-    gv_menu "| 1  - Config GRE Tunnel\n| 2  - Uninstall\n| 3  - Check Service\n| 0  - Exit"
+    gv_menu "| 1  - Config GRE Tunnel\n| 2  - Uninstall GRE Tunnel\n| 3  - Check Tunnel / Service\n| 4  - Restart Tunnel Service\n| 5  - Change Public IP\n| 0  - Exit"
 
     read -rp "Enter option number: " choice
     case $choice in
         1) install_tunnel ;;
         2) uninstall_tunnel ;;
         3) check_service_status ;;
+        4) restart_tunnel_service ;;
+        5) change_public_ips ;;
         0)
             echo -e "${GREEN}Exiting program...${NC}"
             exit 0
