@@ -8,7 +8,7 @@
 
 ## Install & Upgrade
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/dev-ir/gre-tunnel/refs/heads/main/main.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/dev-ir/gre-tunnel/refs/heads/next/main.sh)
 ```
 ## Languages
 - English
