@@ -65,24 +65,63 @@ conflict(){
  [[ -f /etc/netplan/gre-tunnel.yaml ]] && grep -Eq "${prefix//./\\.}\.[12]/30" /etc/netplan/gre-tunnel.yaml && return 0
  return 1
 }
+install_monitor(){
+ mkdir -p /usr/local/libexec /run/dvhost-gre
+ local tmp
+ tmp=$(mktemp) || return 1
+ if ! curl -fsSL --retry 3 --connect-timeout 10 "https://raw.githubusercontent.com/dev-ir/gre-tunnel/v2.0.1/monitor.sh" -o "$tmp"; then
+  rm -f "$tmp"; msg "Failed downloading monitoring component"; return 1
+ fi
+ bash -n "$tmp" || { rm -f "$tmp"; return 1; }
+ install -m 755 "$tmp" /usr/local/libexec/dvhost-gre-monitor
+ rm -f "$tmp"
+}
 write_unit(){
  local n=$1 remote=$2
+ [[ -x /usr/local/libexec/dvhost-gre-monitor ]] || install_monitor || return 1
  cat > "/etc/systemd/system/$(svc "$n")" <<EOF
 [Unit]
-Description=DVHOST GRE Keepalive ($n)
+Description=DVHOST GRE Health Monitor ($n)
 After=network-online.target
 Wants=network-online.target
 [Service]
 Type=simple
-ExecStart=/bin/bash -c 'while true; do /usr/bin/ping -4 -I $n -c 1 -W 2 $remote >/dev/null 2>&1 || true; sleep 15; done'
+ExecStart=/usr/local/libexec/dvhost-gre-monitor $n $remote
 Restart=always
 RestartSec=10
-StartLimitIntervalSec=0
 [Install]
 WantedBy=multi-user.target
 EOF
  systemctl daemon-reload
- systemctl enable --now "$(svc "$n")"
+ systemctl enable --now "$(svc "$n")" >/dev/null
+ systemctl restart "$(svc "$n")"
+}
+monitor_status(){
+ local n file timestamp state loss latency age now
+ printf '%-8s %-11s %-10s %-12s %-8s\n' NAME HEALTH LOSS LATENCY AGE
+ while IFS= read -r n; do
+  file="/run/dvhost-gre/$n.status"
+  if [[ ! -f "$file" ]]; then printf '%-8s %-11s %-10s %-12s %-8s\n' "$n" UNKNOWN - - -; continue; fi
+  timestamp=$(sed -n 's/^timestamp=//p' "$file")
+  state=$(sed -n 's/^state=//p' "$file")
+  loss=$(sed -n 's/^loss=//p' "$file")
+  latency=$(sed -n 's/^latency=//p' "$file")
+  if [[ ! "$timestamp" =~ ^[0-9]+$ ]]; then state=UNKNOWN; age=-; else
+   now=$(date +%s); age=$((now-timestamp))
+   if ((age>60 || age<0)); then state=STALE; fi
+   age="$age""s"
+  fi
+  printf '%-8s %-11s %-10s %-12s %-8s\n' "$n" "$state" "$loss%" "$latency ms" "$age"
+ done < <(names)
+}
+upgrade_monitors(){
+ local n
+ install_monitor || return 1
+ while IFS= read -r n; do
+  load "$n" || continue
+  write_unit "$n" "$REMOTE_TUNNEL" || msg "Failed: $n"
+ done < <(names)
+ msg "Monitor services updated."
 }
 add(){
  local n role iran foreign prefix o1 o2 o3 lp rp a b file cfile
@@ -197,6 +236,7 @@ remove_tunnel(){
  systemctl disable --now "$(svc "$n")" &>/dev/null || true
  rm -f "/etc/systemd/system/$(svc "$n")" "$file.disabled" "$(conf "$n")" "$backup"
  systemctl daemon-reload
+ rm -f "/run/dvhost-gre/$n.status"
  ip link del "$n" 2>/dev/null || true
  msg "${GREEN}Removed $n only${NC}"
 }
@@ -212,6 +252,8 @@ menu(){
  msg '[ 3 ] Check Tunnel / Service'
  msg '[ 4 ] Restart GRE Tunnel'
  msg '[ 5 ] Change GRE Public IPs'
+ msg '[ 7 ] Tunnel Quality / Health'
+ msg '[ 8 ] Install / Upgrade Monitoring'
  msg "${RED}[ 6 ] Delete GRE Tunnel${NC}"
  msg '[ 0 ] Exit'
  msg '-------------------------------------------------'
@@ -222,7 +264,7 @@ while true; do
  menu
  read -r -p 'Select: ' choice || break
  case $choice in
-  1) add || true;; 2) list;; 3) status;; 4) restart;; 5) edit_ips;; 6) remove_tunnel;; 0) exit 0;; *) msg 'Invalid choice';;
+  1) add || true;; 2) list;; 3) status;; 4) restart;; 5) edit_ips;; 6) remove_tunnel;; 7) monitor_status;; 8) upgrade_monitors;; 0) exit 0;; *) msg 'Invalid choice';;
  esac
  pause
 done
