@@ -129,16 +129,46 @@ add(){
  msg "${BLUE}New tunnel: $n${NC}"
  read -r -p 'Role (1=Iran, 2=Foreign): ' role
  [[ $role == 1 || $role == 2 ]] || { msg 'Invalid role'; return 1; }
- read -r -p 'Iran public IPv4: ' iran
- read -r -p 'Foreign public IPv4: ' foreign
- valid_ip "$iran" && valid_ip "$foreign" && [[ $iran != "$foreign" ]] || { msg 'Invalid public IPs'; return 1; }
- read -r -p 'GRE subnet prefix (example 10.50.1): ' prefix
- [[ $prefix =~ ^([0-9]{1,3}\.){2}[0-9]{1,3}$ ]] && valid_ip "$prefix.1" || { msg 'Invalid subnet'; return 1; }
+ local detected_ip suggested_prefix attempt random_a random_b
+ detected_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1);exit}}')
+ if ! valid_ip "${detected_ip:-}"; then detected_ip=$(curl -4fsS --connect-timeout 2 --max-time 4 https://api.ipify.org 2>/dev/null || true); fi
+ valid_ip "${detected_ip:-}" || detected_ip=""
+ if [[ $role == 1 ]]; then
+  read -r -p "Iran public IPv4 [${detected_ip:-required}]: " iran
+  iran=${iran:-$detected_ip}
+  read -r -p 'Foreign public IPv4: ' foreign
+ else
+  read -r -p 'Iran public IPv4: ' iran
+  read -r -p "Foreign public IPv4 [${detected_ip:-required}]: " foreign
+  foreign=${foreign:-$detected_ip}
+ fi
+ valid_ip "$iran" && valid_ip "$foreign" && [[ $iran != "$foreign" ]] || { msg "${RED}Invalid public IPs${NC}"; return 1; }
+ if [[ $role == 1 ]]; then lp=$iran; rp=$foreign; else lp=$foreign; rp=$iran; fi
+ suggested_prefix=""
+ if [[ $role == 1 ]]; then
+  for ((attempt=0;attempt<100;attempt++)); do
+   random_a=$(od -An -N1 -tu1 /dev/urandom | tr -d ' ')
+   random_b=$(od -An -N1 -tu1 /dev/urandom | tr -d ' ')
+   suggested_prefix="10.$((random_a%256)).$((random_b%256))"
+   if ! conflict "$suggested_prefix.1" "$suggested_prefix"; then break; fi
+   suggested_prefix=""
+  done
+ fi
+ if [[ -n "$suggested_prefix" ]]; then
+  read -r -p "GRE subnet prefix [${suggested_prefix}] (press Enter for auto): " prefix
+  prefix=${prefix:-$suggested_prefix}
+ else
+  read -r -p 'GRE subnet prefix from Iran server (e.g. 10.50.1): ' prefix
+ fi
+ prefix=${prefix%/30}
+ prefix=${prefix%.0}
+ [[ $prefix =~ ^([0-9]{1,3}\\.){2}[0-9]{1,3}$ ]] && valid_ip "$prefix.1" || { msg "${RED}Invalid subnet${NC}"; return 1; }
  IFS=. read -r o1 o2 o3 <<< "$prefix"
- if ! { ((o1 == 10)) || ((o1 == 172 && o2 >= 16 && o2 <= 31)) || ((o1 == 192 && o2 == 168)); }; then msg 'Use private address space'; return 1; fi
- if [[ $role == 1 ]]; then lp=$iran; rp=$foreign; a=$prefix.1; b=$prefix.2
- else lp=$foreign; rp=$iran; a=$prefix.2; b=$prefix.1; fi
- conflict "$a" "$prefix" && { msg "${RED}Subnet already in use${NC}"; return 1; }
+ if ! { ((10#$o1 == 10)) || ((10#$o1 == 172 && 10#$o2 >= 16 && 10#$o2 <= 31)) || ((10#$o1 == 192 && 10#$o2 == 168)); }; then
+  msg "${RED}Use a private subnet${NC}"; return 1
+ fi
+ if [[ $role == 1 ]]; then a="$prefix.1"; b="$prefix.2"; else a="$prefix.2"; b="$prefix.1"; fi
+ if conflict "$a" "$prefix"; then msg "${RED}Subnet already in use on this server${NC}"; return 1; fi
  file=$(np "$n"); cfile=$(conf "$n")
  cat > "$file" <<EOF
 network:
