@@ -51,8 +51,8 @@ apply(){ netplan generate && netplan apply; }
 healthy(){ local n=$1 peer=$2; ip link show dev "$n" >/dev/null 2>&1 && ping -n -4 -I "$n" -c 2 -W 2 "$peer" >/dev/null 2>&1; }
 setup_deps(){
  local c missing=0
- for c in ip netplan ping systemctl python3; do command -v "$c" &>/dev/null || missing=1; done
- if ((missing)); then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y iproute2 iputils-ping netplan.io python3; fi
+ for c in ip netplan ping systemctl python3 curl; do command -v "$c" &>/dev/null || missing=1; done
+ if ((missing)); then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y iproute2 iputils-ping netplan.io python3 curl; fi
  modprobe ip_gre 2>/dev/null || true
 }
 conflict(){
