@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # DVHOST GRE Tunnel - Multi Tunnel Manager
 set -Eeuo pipefail
-VERSION="2.0.0"
+VERSION="2.0.1"
 BASE="/etc/dvhost-gre"
 BLUE='\033[0;34m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[0;33m'; NC='\033[0m'
 [[ $EUID -eq 0 ]] || { echo 'Run as root'; exit 1; }
@@ -13,7 +13,7 @@ valid_ip(){
  [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
  local -a parts
  IFS=. read -ra parts <<< "$ip"
- for x in "${parts[@]}"; do [[ ${#x} -le 3 ]] && ((10#$x <= 255)) || return 1; done
+ for x in "${parts[@]}"; do [[ ${#x} -le 3 && $x =~ ^(0|[1-9][0-9]*)$ ]] || return 1; ((10#$x <= 255)) || return 1; done
 }
 valid_name(){ [[ $1 =~ ^gre[0-9]{2,3}$ ]] && [[ $1 != gre0858 ]]; }
 conf(){ echo "$BASE/$1.conf"; }
@@ -48,6 +48,7 @@ next_name(){
  return 1
 }
 apply(){ netplan generate && netplan apply; }
+healthy(){ local n=$1 peer=$2; ip link show dev "$n" >/dev/null 2>&1 && ping -n -4 -I "$n" -c 2 -W 2 "$peer" >/dev/null 2>&1; }
 setup_deps(){
  local c missing=0
  for c in ip netplan ping systemctl python3; do command -v "$c" &>/dev/null || missing=1; done
@@ -73,9 +74,10 @@ After=network-online.target
 Wants=network-online.target
 [Service]
 Type=simple
-ExecStart=/bin/bash -c 'while true; do /usr/bin/ping -4 -I $n -c 1 -W 2 $remote >/dev/null 2>&1 || true; sleep 5; done'
+ExecStart=/bin/bash -c 'while true; do /usr/bin/ping -4 -I $n -c 1 -W 2 $remote >/dev/null 2>&1 || true; sleep 15; done'
 Restart=always
-RestartSec=5
+RestartSec=10
+StartLimitIntervalSec=0
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -109,6 +111,7 @@ network:
       local: $lp
       remote: $rp
       addresses: [$a/30]
+      mtu: 1400
 EOF
  chmod 600 "$file"
  if ! apply; then rm -f "$file"; apply || true; msg "${RED}Netplan failed; new config removed${NC}"; return 1; fi
@@ -122,6 +125,7 @@ EOF
  chmod 600 "$cfile"
  write_unit "$n" "$b" || msg "${YELLOW}Keepalive service failed; check systemctl${NC}"
  msg "${GREEN}Configured $n: $a -> $b${NC}"
+ if healthy "$n" "$b"; then msg "${GREEN}Peer reachable${NC}"; else msg "${YELLOW}Peer not responding yet; configure the other side first${NC}"; fi
  msg 'Configure the other side with the same subnet. Allow IP protocol 47.'
 }
 list(){
@@ -129,7 +133,7 @@ list(){
  printf '%-8s %-9s %-16s %-16s %-8s %-9s\n' NAME ROLE LOCAL REMOTE LINK SERVICE
  while IFS= read -r n; do
   load "$n" || continue
-  state=DOWN; ip link show "$n" &>/dev/null && state=UP
+  state=DOWN; ip link show "$n" &>/dev/null && state=UP; healthy "$n" "$REMOTE_TUNNEL" && state=HEALTHY
   service=inactive; systemctl is-active --quiet "$(svc "$n")" && service=active
   printf '%-8s %-9s %-16s %-16s %-8s %-9s\n' "$n" "$ROLE" "$LOCAL_TUNNEL" "$REMOTE_TUNNEL" "$state" "$service"
  done < <(names)
@@ -142,12 +146,20 @@ status(){
  ip -d link show "$n" || true
  ip -4 addr show dev "$n" || true
  systemctl --no-pager --full status "$(svc "$n")" | head -n 14 || true
- ping -4 -I "$n" -c 2 -W 2 "$REMOTE_TUNNEL" || true
+ ping -4 -I "$n" -c 3 -W 2 "$REMOTE_TUNNEL" || msg "${YELLOW}Peer is not responding (check GRE protocol 47 and routing)${NC}"
 }
 restart(){
  local n
  n=$(choose) || return
- if apply; then systemctl restart "$(svc "$n")" && msg "${GREEN}Restarted $n${NC}"; fi
+ load "$n" || return 1
+ if ip link show "$n" &>/dev/null; then
+  ip link set dev "$n" down && ip link set dev "$n" up || true
+ else
+  msg "${YELLOW}Interface missing; applying Netplan${NC}"
+  apply || return 1
+ fi
+ systemctl restart "$(svc "$n")"
+ if healthy "$n" "$REMOTE_TUNNEL"; then msg "${GREEN}$n peer reachable${NC}"; else msg "${YELLOW}$n restarted, but peer did not answer ping${NC}"; fi
 }
 edit_ips(){
  local n lp rp file backup
