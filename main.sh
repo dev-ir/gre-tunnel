@@ -240,29 +240,48 @@ remove_tunnel(){
  ip link del "$n" 2>/dev/null || true
  msg "${GREEN}Removed $n only${NC}"
 }
+# Minimal terminal dashboard; no external UI dependencies.
+ui_line(){ printf '%b\n' "${BLUE}  ───────────────────────────────────────────────────${NC}"; }
+ui_item(){ printf '  ${GREEN}[ %s ]${NC}  %s\n' "$1" "$2"; }
+ui_title(){ printf '  ${BLUE}%s${NC}\n' "$1"; }
 menu(){
- clear
- msg "${BLUE}=================================================${NC}"
- msg "${BLUE}          DVHOST GRE TUNNEL v$VERSION${NC}"
- msg "${BLUE}=================================================${NC}"
- msg "Managed tunnels: $(names | wc -l)"
- msg '-------------------------------------------------'
- msg "${GREEN}[ 1 ] Add GRE Tunnel${NC}"
- msg '[ 2 ] List GRE Tunnels'
- msg '[ 3 ] Check Tunnel / Service'
- msg '[ 4 ] Restart GRE Tunnel'
- msg '[ 5 ] Change GRE Public IPs'
- msg '[ 7 ] Tunnel Quality / Health'
- msg '[ 8 ] Install / Upgrade Monitoring'
- msg "${RED}[ 6 ] Delete GRE Tunnel${NC}"
- msg '[ 0 ] Exit'
- msg '-------------------------------------------------'
- msg 't.me/dvhost_cloud'
+ local server_ip total active=0 n health_file state healthy_count=0
+ server_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)
+ total=$(names | wc -l)
+ while IFS= read -r n; do
+  if ip link show "$n" &>/dev/null; then ((active+=1)); fi
+  health_file="/run/dvhost-gre/$n.status"
+  if [[ -f "$health_file" ]] && grep -qx 'state=UP' "$health_file"; then ((healthy_count+=1)); fi
+ done < <(names)
+ [[ -t 1 && -n "${TERM:-}" && "${TERM:-}" != dumb ]] && clear || true
+ printf '\n'
+ msg "${BLUE}  ╭──────────────────────────────────────────────────╮${NC}"
+ printf '  ${BLUE}│${NC}  ${BOLD}DVHOST${NC}  ${BLUE}/${NC}  GRE TUNNEL                        ${BLUE}│${NC}\n'
+ printf '  ${BLUE}│${NC}  ${DIM}Multi-Tunnel Manager${NC}                     v%-6s ${BLUE}│${NC}\n' "$VERSION"
+ msg "${BLUE}  ╰──────────────────────────────────────────────────╯${NC}"
+ printf '  ${DIM}SERVER${NC}  %-17s  ${DIM}TUNNELS${NC}  %s / %s active\n' "${server_ip:-Unknown}" "$active" "$total"
+ printf '  ${DIM}HEALTH${NC}  %s monitored healthy\n' "$healthy_count"
+ ui_line
+ ui_title 'TUNNEL MANAGEMENT'
+ ui_item 1 'Create new GRE tunnel'
+ ui_item 2 'View all tunnels'
+ ui_item 3 'Tunnel details & diagnostics'
+ ui_line
+ ui_title 'OPERATIONS'
+ ui_item 4 'Restart selected tunnel'
+ ui_item 5 'Update public endpoints'
+ ui_item 6 'Remove a tunnel'
+ ui_line
+ ui_title 'MONITORING'
+ ui_item 7 'Live quality / health'
+ ui_item 8 'Install or upgrade monitors'
+ ui_line
+ printf '  ${DIM}[ 0 ]  Exit${NC}                       ${DIM}t.me/dvhost_cloud${NC}\n\n'
 }
 setup_deps
 while true; do
  menu
- read -r -p 'Select: ' choice || break
+ printf '  \\033[1;34m›\\033[0m  '; read -r choice || break
  case $choice in
   1) add || true;; 2) list;; 3) status;; 4) restart;; 5) edit_ips;; 6) remove_tunnel;; 7) monitor_status;; 8) upgrade_monitors;; 0) exit 0;; *) msg 'Invalid choice';;
  esac
