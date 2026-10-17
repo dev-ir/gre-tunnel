@@ -1,6 +1,15 @@
-# DVHOST GRE Tunnel v2.0.0
+# DVHOST GRE Tunnel v2.0.1
 
 Multi-tunnel GRE manager for Ubuntu with Netplan and systemd.
+
+## Stability improvements in v2.0.1
+- MTU 1400 for new GRE interfaces to reduce fragmentation risk (not a universal MTU guarantee)
+- Peer ICMP reachability checks to distinguish active interface from a responding remote endpoint
+- Restart selected interface without globally applying Netplan when already present
+- Keepalive pacing of 15 seconds instead of 5 seconds
+- Stricter IPv4 validation
+
+ICMP health checks can be false negatives if the remote host blocks ping. Running Netplan on creation or removal still affects the host networking stack; use console access and backups.
 
 ## Features
 - Multiple independent GRE tunnels (gre01, gre02, ...)
@@ -13,7 +22,7 @@ Multi-tunnel GRE manager for Ubuntu with Netplan and systemd.
 Run on **both** Iran and foreign servers:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/dev-ir/gre-tunnel/v2.0.0/main.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/dev-ir/gre-tunnel/v2.0.1/main.sh)
 ```
 
 Choose **Add GRE Tunnel**. Set the Iran and foreign public IPv4 addresses identically on both hosts, selecting the corresponding role (Iran/Foreign). Use the **same unique private GRE subnet prefix** (for example, `10.50.1`) on both hosts. For a second foreign server, create another tunnel on the Iran server with a **different subnet**, for example `10.50.2`.
@@ -33,7 +42,7 @@ Interface names are **local to each server** and may differ. Keep the correspond
 
 ## Compatibility
 
-v2.0.0 stores configs under `/etc/dvhost-gre/`, Netplan definitions in `/etc/netplan/90-dvhost-greXX.yaml`, and keepalive units as `dvhost-gre-greXX.service`. It does not migrate or modify the old `gre0858` tunnel.
+v2.0.1 stores configs under `/etc/dvhost-gre/`, Netplan definitions in `/etc/netplan/90-dvhost-greXX.yaml`, and keepalive units as `dvhost-gre-greXX.service`. It does not migrate or modify the old `gre0858` tunnel.
 
 ## Support
 
