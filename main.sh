@@ -243,18 +243,18 @@ remove_tunnel(){
 # Minimal terminal dashboard; no external UI dependencies.
 server_info(){
  local cache="$BASE/server-info.cache" public="" country="Unknown" isp="Unknown" body=""
+ if [[ -f "$cache" && -n "$(find "$cache" -mmin -1440 -print 2>/dev/null)" ]]; then
+  IFS="|" read -r CACHE_IP CACHE_COUNTRY CACHE_ISP < "$cache" || true
+  if [[ -n "${CACHE_IP:-}" ]]; then
+   printf "%s|%s|%s\n" "$CACHE_IP" "${CACHE_COUNTRY:-Unknown}" "${CACHE_ISP:-Unknown}"
+   return
+  fi
+ fi
  public=$(curl -4fsS --connect-timeout 2 --max-time 4 https://api.ipify.org 2>/dev/null || true)
  if [[ -z "$public" ]]; then
   public=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)
  fi
  [[ -n "$public" ]] || public=Unknown
- if [[ -f "$cache" && $(find "$cache" -mmin -1440 -print 2>/dev/null) ]]; then
-  IFS='|' read -r CACHE_IP CACHE_COUNTRY CACHE_ISP < "$cache" || true
-  if [[ "$CACHE_IP" == "$public" || "$public" == Unknown ]]; then
-   printf '%s|%s|%s\n' "$CACHE_IP" "$CACHE_COUNTRY" "$CACHE_ISP"
-   return
-  fi
- fi
  if [[ "$public" != Unknown ]]; then
   body=$(curl -4fsS --connect-timeout 2 --max-time 5 "https://ipwho.is/$public" 2>/dev/null || true)
   if [[ -n "$body" ]]; then
