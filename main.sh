@@ -241,12 +241,39 @@ remove_tunnel(){
  msg "${GREEN}Removed $n only${NC}"
 }
 # Minimal terminal dashboard; no external UI dependencies.
+server_info(){
+ local cache="$BASE/server-info.cache" public="" country="Unknown" isp="Unknown" body=""
+ public=$(curl -4fsS --connect-timeout 2 --max-time 4 https://api.ipify.org 2>/dev/null || true)
+ if [[ -z "$public" ]]; then
+  public=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)
+ fi
+ [[ -n "$public" ]] || public=Unknown
+ if [[ -f "$cache" && $(find "$cache" -mmin -1440 -print 2>/dev/null) ]]; then
+  IFS='|' read -r CACHE_IP CACHE_COUNTRY CACHE_ISP < "$cache" || true
+  if [[ "$CACHE_IP" == "$public" || "$public" == Unknown ]]; then
+   printf '%s|%s|%s\n' "$CACHE_IP" "$CACHE_COUNTRY" "$CACHE_ISP"
+   return
+  fi
+ fi
+ if [[ "$public" != Unknown ]]; then
+  body=$(curl -4fsS --connect-timeout 2 --max-time 5 "https://ipwho.is/$public" 2>/dev/null || true)
+  if [[ -n "$body" ]]; then
+   local parsed
+   parsed=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get("country") or "Unknown").replace("|"," "), "|", ((d.get("connection") or {}).get("isp") or "Unknown").replace("|"," "))' 2>/dev/null || true)
+   if [[ "$parsed" == *' | '* ]]; then country=${parsed% | *}; isp=${parsed#* | }; fi
+  fi
+ fi
+ printf '%s|%s|%s\n' "$public" "$country" "$isp" > "$cache"
+ chmod 600 "$cache"
+ printf '%s|%s|%s\n' "$public" "$country" "$isp"
+}
 ui_line(){ printf '%b\n' "${BLUE}  ───────────────────────────────────────────────────${NC}"; }
 ui_item(){ printf '%b  %s\n' "  ${GREEN}[ $1 ]${NC}" "$2"; }
 ui_title(){ msg "  ${BLUE}$1${NC}"; }
 menu(){
- local server_ip total active=0 n health_file state healthy_count=0
- server_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)
+ local server_ip server_country server_isp server_data total active=0 n health_file healthy_count=0
+ server_data=$(server_info)
+ IFS="|" read -r server_ip server_country server_isp <<< "$server_data"
  total=$(names | wc -l)
  while IFS= read -r n; do
   if ip link show "$n" &>/dev/null; then ((active+=1)); fi
@@ -255,12 +282,15 @@ menu(){
  done < <(names)
  [[ -t 1 && -n "${TERM:-}" && "${TERM:-}" != dumb ]] && clear || true
  printf '\n'
- msg "${BLUE}  ╭──────────────────────────────────────────────────╮${NC}"
- msg "  ${BLUE}│${NC}  ${BOLD}DVHOST${NC}  ${BLUE}/${NC}  GRE TUNNEL                        ${BLUE}│${NC}"
- printf '%b\n' "  ${BLUE}│${NC}  ${DIM}Multi-Tunnel Manager${NC}                 v$VERSION ${BLUE}│${NC}"
- msg "${BLUE}  ╰──────────────────────────────────────────────────╯${NC}"
- printf '%b\n' "  ${DIM}SERVER${NC}  ${server_ip:-Unknown}   ${DIM}TUNNELS${NC} $active / $total active"
- msg "  ${DIM}HEALTH${NC}  $healthy_count monitored healthy"
+ msg "${BLUE}  ╭────────────────────────────────────────────────────────────╮${NC}"
+ msg "${BLUE}  │${NC}  ${BOLD}GRE TUNNEL${NC}                                ${DIM}version $VERSION${NC}  ${BLUE}│${NC}"
+ msg "${BLUE}  ├────────────────────────────────────────────────────────────┤${NC}"
+ printf '  %-19s %s\n' 'Server Country   |' "$server_country"
+ printf '  %-19s %s\n' 'Server ISP       |' "$server_isp"
+ printf '  %-19s %s\n' 'Server IP        |' "$server_ip"
+ printf '  %-19s %s\n' 'GRE Tunnel       |' "$active / $total active ($healthy_count healthy)"
+ msg "${BLUE}  ╰────────────────────────────────────────────────────────────╯${NC}"
+ msg "  ${DIM}Copy the IP directly from the Server IP line above.${NC}"
  ui_line
  ui_title 'TUNNEL MANAGEMENT'
  ui_item 1 'Create new GRE tunnel'
