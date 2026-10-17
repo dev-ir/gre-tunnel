@@ -11,6 +11,10 @@ Multi-tunnel GRE manager for Ubuntu with Netplan and systemd.
 
 ICMP health checks can be false negatives if the remote host blocks ping. Running Netplan on creation or removal still affects the host networking stack; use console access and backups.
 
+## Per-tunnel quality monitoring
+
+Use menu **8 — Install / Upgrade Monitoring** once on servers that already have GRE tunnels. Menu **7 — Tunnel Quality / Health** displays the latest packet-loss percentage, average ICMP RTT in milliseconds, and `UP`, `DEGRADED`, `DOWN`, `STALE` or `UNKNOWN` state for every managed interface. Monitoring runs every ~17–25 seconds (five probes plus a 15-second gap), requires successful peer ICMP responses, and detects `DOWN` after three consecutive fully lost batches. The most recent sample is stored under `/run/dvhost-gre/greXX.status` and is cleared on reboot. This is an **ICMP reachability indicator**, not throughput/jitter measurement; blocking ping can produce apparent outages. Each monitor runs as an independent systemd service. No automatic network reset or tunnel reconfiguration occurs on probe failure.
+
 ## Features
 - Multiple independent GRE tunnels (gre01, gre02, ...)
 - Separate Netplan and keepalive service for each tunnel
