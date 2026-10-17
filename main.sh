@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 VERSION="2.0.1"
 BASE="/etc/dvhost-gre"
-BLUE='\033[0;34m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[0;33m'; NC='\033[0m'
+BOLD='\033[1m'; DIM='\033[2m'; BLUE='\033[1;34m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[0;33m'; NC='\033[0m'
 [[ $EUID -eq 0 ]] || { echo 'Run as root'; exit 1; }
 mkdir -p "$BASE"; chmod 700 "$BASE"
 msg(){ printf '%b\n' "$*"; }
@@ -242,8 +242,8 @@ remove_tunnel(){
 }
 # Minimal terminal dashboard; no external UI dependencies.
 ui_line(){ printf '%b\n' "${BLUE}  ───────────────────────────────────────────────────${NC}"; }
-ui_item(){ printf '  ${GREEN}[ %s ]${NC}  %s\n' "$1" "$2"; }
-ui_title(){ printf '  ${BLUE}%s${NC}\n' "$1"; }
+ui_item(){ printf '%b  %s\n' "  ${GREEN}[ $1 ]${NC}" "$2"; }
+ui_title(){ msg "  ${BLUE}$1${NC}"; }
 menu(){
  local server_ip total active=0 n health_file state healthy_count=0
  server_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)
@@ -256,11 +256,11 @@ menu(){
  [[ -t 1 && -n "${TERM:-}" && "${TERM:-}" != dumb ]] && clear || true
  printf '\n'
  msg "${BLUE}  ╭──────────────────────────────────────────────────╮${NC}"
- printf '  ${BLUE}│${NC}  ${BOLD}DVHOST${NC}  ${BLUE}/${NC}  GRE TUNNEL                        ${BLUE}│${NC}\n'
- printf '  ${BLUE}│${NC}  ${DIM}Multi-Tunnel Manager${NC}                     v%-6s ${BLUE}│${NC}\n' "$VERSION"
+ msg "  ${BLUE}│${NC}  ${BOLD}DVHOST${NC}  ${BLUE}/${NC}  GRE TUNNEL                        ${BLUE}│${NC}"
+ printf '%b\n' "  ${BLUE}│${NC}  ${DIM}Multi-Tunnel Manager${NC}                 v$VERSION ${BLUE}│${NC}"
  msg "${BLUE}  ╰──────────────────────────────────────────────────╯${NC}"
- printf '  ${DIM}SERVER${NC}  %-17s  ${DIM}TUNNELS${NC}  %s / %s active\n' "${server_ip:-Unknown}" "$active" "$total"
- printf '  ${DIM}HEALTH${NC}  %s monitored healthy\n' "$healthy_count"
+ printf '%b\n' "  ${DIM}SERVER${NC}  ${server_ip:-Unknown}   ${DIM}TUNNELS${NC} $active / $total active"
+ msg "  ${DIM}HEALTH${NC}  $healthy_count monitored healthy"
  ui_line
  ui_title 'TUNNEL MANAGEMENT'
  ui_item 1 'Create new GRE tunnel'
@@ -276,12 +276,13 @@ menu(){
  ui_item 7 'Live quality / health'
  ui_item 8 'Install or upgrade monitors'
  ui_line
- printf '  ${DIM}[ 0 ]  Exit${NC}                       ${DIM}t.me/dvhost_cloud${NC}\n\n'
+ msg "  ${DIM}[ 0 ]  Exit${NC}                       ${DIM}t.me/dvhost_cloud${NC}"
+ printf '\n'
 }
 setup_deps
 while true; do
  menu
- printf '  \\033[1;34m›\\033[0m  '; read -r choice || break
+ printf '%b' "  ${BLUE}›${NC}  "; read -r choice || break
  case $choice in
   1) add || true;; 2) list;; 3) status;; 4) restart;; 5) edit_ips;; 6) remove_tunnel;; 7) monitor_status;; 8) upgrade_monitors;; 0) exit 0;; *) msg 'Invalid choice';;
  esac
