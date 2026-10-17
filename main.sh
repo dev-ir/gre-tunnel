@@ -161,8 +161,8 @@ add(){
   read -r -p 'GRE subnet prefix from Iran server (e.g. 10.50.1): ' prefix
  fi
  prefix=${prefix%/30}
- prefix=${prefix%.0}
- [[ $prefix =~ ^([0-9]{1,3}\\.){2}[0-9]{1,3}$ ]] && valid_ip "$prefix.1" || { msg "${RED}Invalid subnet${NC}"; return 1; }
+ [[ $prefix =~ ^([0-9]{1,3}[.]){3}0$ ]] && prefix=${prefix%.0}
+ [[ $prefix =~ ^([0-9]{1,3}[.]){2}[0-9]{1,3}$ ]] && valid_ip "$prefix.1" || { msg "${RED}Invalid subnet${NC}"; return 1; }
  IFS=. read -r o1 o2 o3 <<< "$prefix"
  if ! { ((10#$o1 == 10)) || ((10#$o1 == 172 && 10#$o2 >= 16 && 10#$o2 <= 31)) || ((10#$o1 == 192 && 10#$o2 == 168)); }; then
   msg "${RED}Use a private subnet${NC}"; return 1
