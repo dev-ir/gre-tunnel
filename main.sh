@@ -194,6 +194,9 @@ EOF
  chmod 600 "$cfile"
  write_unit "$n" "$b" || msg "${YELLOW}Keepalive service failed; check systemctl${NC}"
  msg "${GREEN}Configured $n: $a -> $b${NC}"
+ msg "${BLUE}Peer setup subnet: ${prefix}.0/30${NC}"
+ msg "Local public IP : $lp"
+ msg "Remote public IP: $rp"
  if healthy "$n" "$b"; then msg "${GREEN}Peer reachable${NC}"; else msg "${YELLOW}Peer not responding yet; configure the other side first${NC}"; fi
  msg 'Configure the other side with the same subnet. Allow IP protocol 47.'
 }
