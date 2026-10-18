@@ -200,6 +200,55 @@ remove_tunnel(){
  systemctl daemon-reload
  log "Removed $n independently."
 }
+# Iran-access readiness diagnostics. Read-only: no routes, tunnels or firewall rules change.
+network_readiness(){
+ local n lp rp a b route src probe status count=0 ok=0
+ log "${BLUE}  NETWORK REACHABILITY / IRAN-ACCESS READINESS${NC}"
+ log '  Checks are best-effort. ICMP may be blocked even when GRE works.'
+ ui_rule
+ printf '%-8s %-13s %-16s %-15s\n' NAME OUTER_ROUTE GRE_PEER PUBLIC_PEER
+ while IFS= read -r n; do
+  load "$n" || continue
+  ((count+=1))
+  route=NO_ROUTE
+  if ip -4 route get "$REMOTE_PUBLIC" from "$LOCAL_PUBLIC" >/dev/null 2>&1; then route=ROUTABLE; fi
+  status=NO_REPLY
+  if ip link show dev "$n" >/dev/null 2>&1 && ping -n -4 -I "$n" -c 2 -W 2 "$REMOTE_GRE" >/dev/null 2>&1; then
+   status=REACHABLE; ((ok+=1))
+  fi
+  probe=NO_REPLY
+  ping -n -4 -c 1 -W 2 "$REMOTE_PUBLIC" >/dev/null 2>&1 && probe=REACHABLE
+  printf '%-8s %-13s %-16s %-15s\n' "$n" "$route" "$status" "$probe"
+ done < <(names)
+ ui_rule
+ log "  GRE peers responding: $ok / $count"
+ if (( count>0 && ok==0 )); then
+  log "${RED}  WARNING: All managed GRE peers failed ICMP probing.${NC}"
+  log '  Check outer-network filtering, peer firewalls, DNS and routing.'
+ elif (( ok>0 && ok<count )); then
+  log "${YELLOW}  Some paths are unresponsive; healthy paths may still carry traffic.${NC}"
+ elif ((count>0)); then
+  log "${GREEN}  Managed GRE peers answered; not proof of Internet access.${NC}"
+ fi
+ log '  DNS resolution:'
+ if command -v getent >/dev/null 2>&1 && timeout 4 getent ahostsv4 example.com >/dev/null 2>&1; then
+  log "${GREEN}  DNS: OK${NC}"
+ else
+  log "${YELLOW}  DNS: UNAVAILABLE or TIMEOUT${NC}"
+ fi
+ log '  External HTTPS probe (IPv4):'
+ if command -v curl >/dev/null 2>&1; then
+  if curl -4 -fsS -o /dev/null --connect-timeout 3 --max-time 6 https://www.cloudflare.com/cdn-cgi/trace; then
+   log "${GREEN}  HTTPS: REACHABLE${NC}"
+  else
+   log "${YELLOW}  HTTPS: NO RESPONSE (not conclusive)${NC}"
+  fi
+ else
+  log '  HTTPS: SKIPPED (curl unavailable)'
+ fi
+ log '  Note: GRE cannot bypass a complete loss of international routing.'
+ log '  Keep distinct upstreams and an independently reachable backup path.'
+}
 # Compact DVHOST terminal dashboard
 ui_rule(){ log "${BLUE}  ────────────────────────────────────────────────────────────${NC}"; }
 ui_section(){ log "${BLUE}  $1${NC}"; }
@@ -251,6 +300,9 @@ menu(){
  ui_option 4 'Restart selected GRE'
  log "  ${RED}[ 5 ]${NC}  Remove selected GRE"
  ui_rule
+ ui_section 'CONNECTIVITY'
+ ui_option 6 'Iran-access readiness / path diagnostics'
+ ui_rule
  log "  ${DIM}[ 0 ]  Exit${NC}                        ${DIM}t.me/dvhost_cloud${NC}"
  log "  ${DIM}Existing v2 tunnels remain untouched.${NC}"
  printf '\n'
@@ -261,7 +313,7 @@ main(){
   menu
   printf '%b' "  ${BLUE}›${NC}  "; read -r choice || break
   case "$choice" in
-   1) add || :;; 2) list;; 3) status;; 4) restart;; 5) remove_tunnel;; 0) return;; *) log 'Invalid choice';;
+   1) add || :;; 2) list;; 3) status;; 4) restart;; 5) remove_tunnel;; 6) network_readiness;; 0) return;; *) log 'Invalid choice';;
   esac
   pause
  done
