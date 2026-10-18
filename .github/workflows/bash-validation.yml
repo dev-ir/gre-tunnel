@@ -1,0 +1,25 @@
+name: Bash validation
+on:
+  push:
+    branches: [v3.0.0]
+  pull_request:
+    branches: [v3.0.0]
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        shell: bash
+        run: |
+          bash -n main.sh
+          bash -n monitor.sh
+      - name: Detect duplicate script concatenation
+        shell: bash
+        run: |
+          test "$(grep -c '^#!/usr/bin/env bash' main.sh)" -eq 1
+          test "$(grep -c '^main "\$@"$' main.sh)" -eq 1
+      - name: ShellCheck critical errors
+        shell: bash
+        run: shellcheck -S error main.sh monitor.sh
