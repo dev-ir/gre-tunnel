@@ -12,7 +12,7 @@ valid_ip(){
  local x a b c d
  [[ $1 =~ ^([0-9]{1,3}[.]){3}[0-9]{1,3}$ ]] || return 1
  IFS=. read -r a b c d <<< "$1"
- for x in "$a" "$b" "$c" "$d"; do [[ $x =~ ^(0|[1-9][0-9]*)$ ]] || return 1; ((x<=255)) || return 1; done
+ for x in "$a" "$b" "$c" "$d"; do [[ $x =~ ^(0|[1-9][0-9]*)$ ]] || return 1; ((10#$x<=255)) || return 1; done
 }
 valid_name(){ [[ $1 =~ ^gre[0-9]{2,3}$ && $1 != gre0858 ]]; }
 state_file(){ printf '%s/%s.conf' "$BASE" "$1"; }
@@ -36,7 +36,7 @@ next_name(){
  local n i
  for ((i=1;i<=99;i++)); do
   printf -v n 'gre%02d' "$i"
-  if [[ ! -e $(state_file "$n") && ! -e /etc/systemd/system/$(service "$n") ]] &&
+  if [[ ! -e $(state_file "$n") && ! -e "/etc/dvhost-gre/$n.conf" && ! -e /etc/systemd/system/$(service "$n") ]] &&
    ! ip link show dev "$n" &>/dev/null && ! grep -RqlE "(^|[[:space:]])$n:" /etc/netplan /etc/systemd/network 2>/dev/null; then
    echo "$n"; return
   fi
