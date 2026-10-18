@@ -97,10 +97,10 @@ After=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStartPre=/usr/sbin/modprobe ip_gre
-ExecStart=/usr/sbin/ip tunnel add $n mode gre local $lp remote $rp
-ExecStart=/usr/sbin/ip addr add $a/30 dev $n
-ExecStart=/usr/sbin/ip link set dev $n mtu 1400 up
-ExecStop=-/usr/sbin/ip tunnel del $n
+ExecStart=/usr/bin/ip tunnel add $n mode gre local $lp remote $rp
+ExecStart=/usr/bin/ip addr add $a/30 dev $n
+ExecStart=/usr/bin/ip link set dev $n mtu 1400 up
+ExecStop=-/usr/bin/ip tunnel del $n
 TimeoutStartSec=20
 [Install]
 WantedBy=multi-user.target
