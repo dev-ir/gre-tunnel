@@ -66,9 +66,9 @@ prefix_busy(){
   grep -Fq "LOCAL_TUN=$p." "$f" && return 0
  done
  # Inspect all currently configured IPv4 addresses, including unmanaged tunnels.
- ip -o -4 addr show | awk '{print $4}' | grep -Eq "^$p[.][12]/" && return 0
+ ip -o -4 addr show | awk '{print $4}' | grep -Eq "^${p}[.][12]/" && return 0
  # Avoid matching existing GRE /30 subnets elsewhere in system configuration.
- grep -RqE "$p[.][12]/30" /etc/netplan /etc/systemd/network /etc/dvhost-gre 2>/dev/null && return 0
+ grep -RqE "${p}[.][12]/30" /etc/netplan /etc/systemd/network /etc/dvhost-gre 2>/dev/null && return 0
  return 1
 }
 random_prefix(){
