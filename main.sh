@@ -350,6 +350,136 @@ sit_remove(){
  systemctl daemon-reload
  log "Removed only $n"
 }
+
+# Additional independent tunnel engines. GRETAP is L2-only: no bridge is modified.
+extra_names(){
+ local type=$1 f n
+ shopt -s nullglob
+ for f in "$BASE"/"$type"[0-9][0-9].conf; do
+  n=${f##*/}; n=${n%.conf}; printf '%s\n' "$n"
+ done
+ shopt -u nullglob
+}
+extra_next(){
+ local type=$1 n i
+ for ((i=1;i<=99;i++)); do
+  printf -v n '%s%02d' "$type" "$i"
+  if [[ ! -e "$(state_file "$n")" && ! -e "/etc/systemd/system/$(service "$n")" ]] &&
+     ! ip link show dev "$n" >/dev/null 2>&1; then
+   echo "$n"; return
+  fi
+ done
+ return 1
+}
+extra_load(){
+ local n=$1
+ [[ $n =~ ^(ipip|gtap)[0-9]{2}$ && -f $(state_file "$n") ]] || return 1
+ unset TYPE ROLE LOCAL_PUBLIC REMOTE_PUBLIC LOCAL_TUN REMOTE_TUN MTU
+ source "$(state_file "$n")"
+ [[ $TYPE == ipip || $TYPE == gtap ]] &&
+ valid_ip "$LOCAL_PUBLIC" && valid_ip "$REMOTE_PUBLIC" &&
+ [[ $LOCAL_PUBLIC != "$REMOTE_PUBLIC" ]] &&
+ [[ $MTU =~ ^[0-9]+$ ]] && ((10#$MTU>=1280 && 10#$MTU<=1480)) || return 1
+ if [[ $TYPE == ipip ]]; then valid_ip "$LOCAL_TUN" && valid_ip "$REMOTE_TUN"; fi
+}
+extra_create(){
+ local type=$1 n role detected iran foreign lp rp prefix a b mtu under nic answer mod ipbin unit state descriptor
+ n=$(extra_next "$type") || { log 'No free interface name'; return 1; }
+ log "${BLUE}CREATE ${type^^}: $n${NC}"
+ read -r -p 'Role [1 Iran / 2 Foreign]: ' role
+ [[ $role == 1 || $role == 2 ]] || { log 'Invalid role'; return 1; }
+ detected=$(local_ip)
+ if [[ $role == 1 ]]; then
+  read -r -p "Iran public IPv4 [$detected]: " iran; iran=${iran:-$detected}
+  read -r -p 'Foreign public IPv4: ' foreign
+  lp=$iran; rp=$foreign
+ else
+  read -r -p 'Iran public IPv4: ' iran
+  read -r -p "Foreign public IPv4 [$detected]: " foreign; foreign=${foreign:-$detected}
+  lp=$foreign; rp=$iran
+ fi
+ valid_ip "$lp" && valid_ip "$rp" && [[ $lp != "$rp" ]] || { log 'Invalid endpoints'; return 1; }
+ preflight "$lp" "$rp" 10.255.255.1 10.255.255.2 || return 1
+ a= b=
+ if [[ $type == ipip ]]; then
+  if [[ $role == 1 ]]; then
+   prefix=$(random_prefix) || return 1
+   read -r -p "Private IPv4 prefix [$prefix]: " answer; prefix=${answer:-$prefix}
+  else
+   read -r -p 'Private IPv4 prefix from Iran (10.x.y): ' prefix
+  fi
+  prefix=${prefix%/30}
+  [[ $prefix =~ ^([0-9]{1,3}[.]){3}0$ ]] && prefix=${prefix%.0}
+  prefix_valid "$prefix" || { log 'Invalid private prefix'; return 1; }
+  prefix_busy "$prefix" && { log 'IPv4 subnet already in use'; return 1; }
+  if [[ $role == 1 ]]; then a="$prefix.1"; b="$prefix.2"; else a="$prefix.2"; b="$prefix.1"; fi
+ else
+  log 'GRETAP creates only an isolated Ethernet interface; bridge attachment is manual.'
+ fi
+ nic=$(ip -4 route get "$rp" from "$lp" 2>/dev/null | awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}')
+ under=$(cat "/sys/class/net/$nic/mtu" 2>/dev/null || echo 1500)
+ [[ $under =~ ^[0-9]+$ ]] || under=1500
+ mtu=1400
+ if [[ $type == ipip ]]; then ((under-20 < mtu)) && mtu=$((under-20))
+ else ((under-42 < mtu)) && mtu=$((under-42)); fi
+ ((mtu>=1280)) || { log 'Underlay MTU insufficient'; return 1; }
+ read -r -p "Tunnel MTU [$mtu]: " answer; mtu=${answer:-$mtu}
+ [[ $mtu =~ ^[0-9]+$ ]] && ((10#$mtu>=1280 && 10#$mtu<=1480)) || { log 'Invalid MTU'; return 1; }
+ if [[ $type == ipip ]]; then
+  ((10#$mtu<=under-20)) || { log 'MTU exceeds underlay'; return 1; }
+  mod=ipip; descriptor='IPv4 in IPv4'
+ else
+  ((10#$mtu<=under-42)) || { log 'MTU exceeds underlay'; return 1; }
+  mod=ip_gre; descriptor='Ethernet over GRE'
+ fi
+ ipbin=$(command -v ip)
+ unit="/etc/systemd/system/$(service "$n")"
+ state=$(state_file "$n")
+ # Generate unique unit. No global network manager, bridge or route changes.
+ {
+  printf '[Unit]\nDescription=DVHOST %s (%s)\nWants=network-online.target\nAfter=network-online.target\n[Service]\nType=oneshot\nRemainAfterExit=yes\n' "$descriptor" "$n"
+  printf 'ExecStartPre=%s %s\n' "$(command -v modprobe)" "$mod"
+  if [[ $type == ipip ]]; then
+   printf 'ExecStart=%s tunnel add %s mode ipip local %s remote %s\n' "$ipbin" "$n" "$lp" "$rp"
+   printf 'ExecStart=%s addr add %s/30 dev %s\n' "$ipbin" "$a" "$n"
+  else
+   printf 'ExecStart=%s link add %s type gretap local %s remote %s\n' "$ipbin" "$n" "$lp" "$rp"
+  fi
+  printf 'ExecStart=%s link set dev %s mtu %s up\n' "$ipbin" "$n" "$mtu"
+  printf 'ExecStop=-%s link del dev %s\nExecStopPost=-%s link del dev %s\nTimeoutStartSec=20\n[Install]\nWantedBy=multi-user.target\n' "$ipbin" "$n" "$ipbin" "$n"
+ } > "$unit"
+ chmod 644 "$unit"; systemctl daemon-reload
+ if ! systemctl start "$(service "$n")" || ! systemctl enable "$(service "$n")" >/dev/null; then
+  systemctl disable --now "$(service "$n")" >/dev/null 2>&1 || :
+  ip link del "$n" >/dev/null 2>&1 || :
+  rm -f "$unit"; systemctl daemon-reload
+  log "${RED}Setup failed; rolled back only $n${NC}"; return 1
+ fi
+ printf 'TYPE=%q\nROLE=%q\nLOCAL_PUBLIC=%q\nREMOTE_PUBLIC=%q\nLOCAL_TUN=%q\nREMOTE_TUN=%q\nMTU=%q\n' \
+  "$type" "$( [[ $role == 1 ]] && echo iran || echo foreign )" "$lp" "$rp" "$a" "$b" "$mtu" > "$state"
+ chmod 600 "$state"
+ log "${GREEN}Created $n ($descriptor); MTU $mtu${NC}"
+ [[ $type == ipip ]] && log "Tunnel peers: $a / $b. Both hosts must use the same prefix."
+ log "Permit protocol $( [[ $type == ipip ]] && echo 4 || echo 47 ) at both ends."
+}
+extra_list(){
+ local type n st
+ for type in ipip gtap; do
+  while IFS= read -r n; do
+   extra_load "$n" || continue
+   st=inactive; systemctl is-active --quiet "$(service "$n")" && st=active
+   printf '%-8s %-7s %-17s %-17s %-9s\n' "$n" "$type" "$LOCAL_PUBLIC" "$REMOTE_PUBLIC" "$st"
+  done < <(extra_names "$type")
+ done
+}
+extra_status(){
+ local n=$1
+ extra_load "$n" || return
+ ip -d link show dev "$n" || :
+ systemctl --no-pager status "$(service "$n")" | head -n 12 || :
+ if [[ $TYPE == ipip ]]; then ping -4 -n -I "$n" -c 4 -W 2 "$REMOTE_TUN" || :
+ else log 'GRETAP is L2-only. Connectivity requires user-managed bridge/L2 endpoints.'; fi
+}
 # Iran-access readiness diagnostics. Read-only: no routes, tunnels or firewall rules change.
 network_readiness(){
  local n lp rp a b route src probe status count=0 ok=0
@@ -436,6 +566,8 @@ header(){
  printf '  %-19s %s\n' 'Server IP        |' "${ip:-Unknown}"
  printf '  %-19s %s\n' 'GRE Tunnel       |' "$active / $total active"
  printf '  %-19s %s\n' 'SIT Tunnel       |' "$(sit_names | wc -l) configured"
+ printf '  %-19s %s\n' 'IPIP Tunnel      |' "$(extra_names ipip | wc -l) configured"
+ printf '  %-19s %s\n' 'GRETAP Tunnel    |' "$(extra_names gtap | wc -l) configured"
  log "${BLUE}  ╰────────────────────────────────────────────────────────────╯${NC}"
 }
 menu(){
@@ -443,8 +575,8 @@ menu(){
  header
  ui_rule
  ui_section 'TUNNEL MANAGEMENT'
- ui_option 1 'Create tunnel (GRE / SIT)'
- ui_option 2 'List GRE and SIT tunnels'
+ ui_option 1 'Create tunnel (GRE / SIT / IPIP / GRETAP)'
+ ui_option 2 'List all tunnels'
  ui_option 3 'Tunnel details & connectivity'
  ui_rule
  ui_section 'OPERATIONS'
@@ -462,10 +594,12 @@ select_engine(){
  log "${BLUE}  TUNNEL ENGINE${NC}"
  log '  [ 1 ] GRE - IPv4 over GRE (protocol 47)'
  log '  [ 2 ] SIT - IPv6 over IPv4 (protocol 41)'
+ log '  [ 3 ] IPIP - IPv4 over IPv4 (protocol 4)'
+ log '  [ 4 ] GRETAP - Ethernet over GRE (protocol 47)'
  log '  [ 0 ] Back'
  local choice
  read -r -p '  Select: ' choice
- case "$choice" in 1) add;; 2) sit_add;; 0) return;; *) log 'Invalid choice';; esac
+ case "$choice" in 1) add;; 2) sit_add;; 3) extra_create ipip;; 4) extra_create gtap;; 0) return;; *) log 'Invalid choice';; esac
 }
 any_pick(){
  local n
@@ -477,6 +611,7 @@ any_status(){
  local n
  n=$(any_pick) || return
  if [[ $n == sit* ]]; then sit_status "$n"
+ elif [[ $n == ipip* || $n == gtap* ]]; then extra_status "$n"
  else
   load "$n" || return
   ip -d link show "$n" || :
@@ -493,6 +628,12 @@ any_remove(){
  local n
  n=$(any_pick) || return
  if [[ $n == sit* ]]; then sit_remove "$n"
+ elif [[ $n == ipip* || $n == gtap* ]]; then
+  read -r -p "Type DELETE-$n to confirm: " confirm
+  [[ $confirm == "DELETE-$n" ]] || return
+  systemctl disable --now "$(service "$n")" || return 1
+  rm -f "/etc/systemd/system/$(service "$n")" "$(state_file "$n")"
+  systemctl daemon-reload
  else
   read -r -p "Type DELETE-$n to confirm: " confirm
   [[ "$confirm" == "DELETE-$n" ]] || return
@@ -507,7 +648,7 @@ main(){
   menu
   printf '%b' "  ${BLUE}›${NC}  "; read -r choice || break
   case "$choice" in
-   1) select_engine || :;; 2) list; sit_list;; 3) any_status;; 4) any_restart;; 5) any_remove;; 6) network_readiness;; 0) return;; *) log 'Invalid choice';;
+   1) select_engine || :;; 2) list; sit_list; extra_list;; 3) any_status;; 4) any_restart;; 5) any_remove;; 6) network_readiness;; 0) return;; *) log 'Invalid choice';;
   esac
   pause
  done
