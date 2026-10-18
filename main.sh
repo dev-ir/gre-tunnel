@@ -14,7 +14,7 @@ valid_ip(){
  IFS=. read -r a b c d <<< "$1"
  for x in "$a" "$b" "$c" "$d"; do [[ $x =~ ^(0|[1-9][0-9]*)$ ]] || return 1; ((10#$x<=255)) || return 1; done
 }
-valid_name(){ [[ $1 =~ ^gre[0-9]{2,3}$ && $1 != gre0858 ]]; }
+valid_name(){ [[ $1 =~ ^(gre[0-9]{2,3}|sit[0-9]{2})$ && $1 != gre0858 ]]; }
 state_file(){ printf '%s/%s.conf' "$BASE" "$1"; }
 service(){ printf 'dvhost-gre-v3-%s.service' "$1"; }
 load(){
@@ -200,6 +200,135 @@ remove_tunnel(){
  systemctl daemon-reload
  log "Removed $n independently."
 }
+
+# SIT (IPv6-in-IPv4, IP protocol 41) is a separate engine.
+sit_state(){ printf '%s/%s.conf' "$BASE" "$1"; }
+sit_names(){
+ local f n
+ shopt -s nullglob
+ for f in "$BASE"/sit[0-9][0-9].conf; do
+  n=${f##*/}; n=${n%.conf}; [[ $n =~ ^sit[0-9]{2}$ ]] && echo "$n"
+ done
+ shopt -u nullglob
+}
+sit_next(){
+ local i n
+ for ((i=1;i<=99;i++)); do
+  printf -v n 'sit%02d' "$i"
+  if [[ ! -e "$(sit_state "$n")" && ! -e "/etc/systemd/system/$(service "$n")" ]] &&
+     ! ip link show dev "$n" &>/dev/null &&
+     ! grep -RqlF "$n:" /etc/netplan /etc/systemd/network 2>/dev/null; then echo "$n"; return; fi
+ done
+ return 1
+}
+sit_load(){
+ [[ -f "$(sit_state "$1")" ]] || return 1
+ unset ROLE LOCAL_PUBLIC REMOTE_PUBLIC LOCAL_SIT REMOTE_SIT SIT_PREFIX
+ source "$(sit_state "$1")"
+ [[ ${ROLE:-} =~ ^(iran|foreign)$ ]] &&
+ valid_ip "$LOCAL_PUBLIC" && valid_ip "$REMOTE_PUBLIC" &&
+ [[ ${SIT_PREFIX:-} =~ ^fd[0-9a-f]{2}(:[0-9a-f]{4}){3}$ ]] &&
+ [[ ${LOCAL_SIT:-} == "$SIT_PREFIX::1" || ${LOCAL_SIT:-} == "$SIT_PREFIX::2" ]]
+}
+sit_prefix_busy(){
+ local prefix=$1
+ ip -o -6 addr show | grep -Fq "$prefix:" && return 0
+ grep -RFiq "$prefix" "$BASE" /etc/netplan /etc/systemd/network 2>/dev/null && return 0
+ return 1
+}
+sit_random_prefix(){
+ local raw prefix i
+ for ((i=0;i<100;i++)); do
+  raw=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
+  prefix="fd${raw:0:2}:${raw:2:4}:${raw:6:4}:${raw:10:4}"
+  sit_prefix_busy "$prefix" || { printf '%s\n' "$prefix"; return; }
+ done
+ return 1
+}
+sit_add(){
+ local n role detected iran foreign lp rp prefix proposed addr peer sf unit
+ n=$(sit_next) || { log 'No free SIT names'; return 1; }
+ log "${BLUE}CREATE SIT $n (IPv6 over IPv4)${NC}"
+ read -r -p 'Role [1 Iran / 2 Foreign]: ' role
+ [[ $role == 1 || $role == 2 ]] || { log 'Invalid role'; return 1; }
+ detected=$(local_ip)
+ if [[ $role == 1 ]]; then
+  read -r -p "Iran public IPv4 [$detected]: " iran; iran=${iran:-$detected}
+  read -r -p 'Foreign public IPv4: ' foreign
+  lp=$iran; rp=$foreign
+  proposed=$(sit_random_prefix) || return 1
+  read -r -p "SIT IPv6 ULA prefix [$proposed]: " prefix; prefix=${prefix:-$proposed}
+ else
+  read -r -p 'Iran public IPv4: ' iran
+  read -r -p "Foreign public IPv4 [$detected]: " foreign; foreign=${foreign:-$detected}
+  lp=$foreign; rp=$iran
+  read -r -p 'SIT IPv6 ULA prefix from Iran (fdxx:xxxx:xxxx:xxxx): ' prefix
+ fi
+ prefix=${prefix,,}
+ [[ $prefix =~ ^fd[0-9a-f]{2}(:[0-9a-f]{4}){3}$ ]] || { log "${RED}Invalid IPv6 /64 prefix${NC}"; return 1; }
+ sit_prefix_busy "$prefix" && { log "${RED}IPv6 prefix already used locally${NC}"; return 1; }
+ preflight "$lp" "$rp" 10.255.255.1 10.255.255.2 || return 1
+ if [[ $role == 1 ]]; then addr="$prefix::1"; peer="$prefix::2"
+ else addr="$prefix::2"; peer="$prefix::1"; fi
+ unit="/etc/systemd/system/$(service "$n")"
+ cat > "$unit" <<EOF
+[Unit]
+Description=DVHOST Independent SIT ($n)
+Wants=network-online.target
+After=network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/usr/sbin/modprobe sit
+ExecStart=/usr/bin/ip tunnel add $n mode sit local $lp remote $rp
+ExecStart=/usr/bin/ip -6 addr add $addr/64 dev $n
+ExecStart=/usr/bin/ip link set dev $n mtu 1480 up
+ExecStop=-/usr/bin/ip tunnel del $n
+TimeoutStartSec=20
+[Install]
+WantedBy=multi-user.target
+EOF
+ chmod 644 "$unit"
+ systemctl daemon-reload
+ if ! systemctl start "$(service "$n")" || ! systemctl enable "$(service "$n")" >/dev/null; then
+  systemctl disable --now "$(service "$n")" >/dev/null 2>&1 || :
+  ip tunnel del "$n" >/dev/null 2>&1 || :
+  rm -f "$unit"; systemctl daemon-reload
+  log "${RED}SIT setup failed; only $n rolled back${NC}"; return 1
+ fi
+ sf=$(sit_state "$n")
+ printf 'ROLE=%s\nLOCAL_PUBLIC=%s\nREMOTE_PUBLIC=%s\nSIT_PREFIX=%s\nLOCAL_SIT=%s\nREMOTE_SIT=%s\n' \
+  "$( [[ $role == 1 ]] && echo iran || echo foreign )" "$lp" "$rp" "$prefix" "$addr" "$peer" > "$sf"
+ chmod 600 "$sf"
+ log "${GREEN}Created $n: $addr -> $peer${NC}"
+ log "Enter this same IPv6 prefix on the opposite server: $prefix"
+ log 'SIT uses IPv4 protocol 41. Both endpoints must allow it.'
+}
+sit_list(){
+ local n st
+ printf '%-8s %-9s %-26s %-26s %-8s\n' NAME ROLE LOCAL_V6 REMOTE_V6 SERVICE
+ while IFS= read -r n; do
+  sit_load "$n" || continue
+  st=inactive; systemctl is-active --quiet "$(service "$n")" && st=active
+  printf '%-8s %-9s %-26s %-26s %-8s\n' "$n" "$ROLE" "$LOCAL_SIT" "$REMOTE_SIT" "$st"
+ done < <(sit_names)
+}
+sit_status(){
+ local n=$1
+ sit_load "$n" || return
+ ip -d link show dev "$n" || :
+ systemctl --no-pager status "$(service "$n")" | head -n 12 || :
+ ping -6 -n -I "$n" -c 4 -W 2 "$REMOTE_SIT" || :
+}
+sit_remove(){
+ local n=$1 confirmation
+ read -r -p "Type DELETE-$n to confirm: " confirmation
+ [[ "$confirmation" == "DELETE-$n" ]] || { log 'Cancelled'; return; }
+ systemctl disable --now "$(service "$n")" || return 1
+ rm -f "/etc/systemd/system/$(service "$n")" "$(sit_state "$n")"
+ systemctl daemon-reload
+ log "Removed only $n"
+}
 # Iran-access readiness diagnostics. Read-only: no routes, tunnels or firewall rules change.
 network_readiness(){
  local n lp rp a b route src probe status count=0 ok=0
@@ -246,7 +375,7 @@ network_readiness(){
  else
   log '  HTTPS: SKIPPED (curl unavailable)'
  fi
- log '  Note: GRE cannot bypass a complete loss of international routing.'
+ log '  Note: GRE/SIT cannot bypass a complete loss of international routing.'
  log '  Keep distinct upstreams and an independently reachable backup path.'
 }
 # Compact DVHOST terminal dashboard
@@ -285,6 +414,7 @@ header(){
  printf '  %-19s %s\n' 'Server ISP       |' "${isp:-Unknown}"
  printf '  %-19s %s\n' 'Server IP        |' "${ip:-Unknown}"
  printf '  %-19s %s\n' 'GRE Tunnel       |' "$active / $total active"
+ printf '  %-19s %s\n' 'SIT Tunnel       |' "$(sit_names | wc -l) configured"
  log "${BLUE}  ╰────────────────────────────────────────────────────────────╯${NC}"
 }
 menu(){
@@ -292,13 +422,13 @@ menu(){
  header
  ui_rule
  ui_section 'TUNNEL MANAGEMENT'
- ui_option 1 'Create independent GRE tunnel'
- ui_option 2 'List GRE tunnels'
+ ui_option 1 'Create tunnel (GRE / SIT)'
+ ui_option 2 'List GRE and SIT tunnels'
  ui_option 3 'Tunnel details & connectivity'
  ui_rule
  ui_section 'OPERATIONS'
- ui_option 4 'Restart selected GRE'
- log "  ${RED}[ 5 ]${NC}  Remove selected GRE"
+ ui_option 4 'Restart selected tunnel'
+ log "  ${RED}[ 5 ]${NC}  Remove selected tunnel"
  ui_rule
  ui_section 'CONNECTIVITY'
  ui_option 6 'Iran-access readiness / path diagnostics'
@@ -307,13 +437,56 @@ menu(){
  log "  ${DIM}Existing v2 tunnels remain untouched.${NC}"
  printf '\n'
 }
+select_engine(){
+ log "${BLUE}  TUNNEL ENGINE${NC}"
+ log '  [ 1 ] GRE - IPv4 over GRE (protocol 47)'
+ log '  [ 2 ] SIT - IPv6 over IPv4 (protocol 41)'
+ log '  [ 0 ] Back'
+ local choice
+ read -r -p '  Select: ' choice
+ case "$choice" in 1) add;; 2) sit_add;; 0) return;; *) log 'Invalid choice';; esac
+}
+any_pick(){
+ local n
+ read -r -p 'Tunnel name (gre01 / sit01): ' n
+ valid_name "$n" && [[ -f "$(state_file "$n")" ]] || { log 'Unknown managed tunnel' >&2; return 1; }
+ echo "$n"
+}
+any_status(){
+ local n
+ n=$(any_pick) || return
+ if [[ $n == sit* ]]; then sit_status "$n"
+ else
+  load "$n" || return
+  ip -d link show "$n" || :
+  systemctl --no-pager status "$(service "$n")" | head -n 12 || :
+  ping -n -4 -I "$n" -c 4 -W 2 "$REMOTE_GRE" || :
+ fi
+}
+any_restart(){
+ local n
+ n=$(any_pick) || return
+ systemctl restart "$(service "$n")" && log "Restarted only $n"
+}
+any_remove(){
+ local n
+ n=$(any_pick) || return
+ if [[ $n == sit* ]]; then sit_remove "$n"
+ else
+  read -r -p "Type DELETE-$n to confirm: " confirm
+  [[ "$confirm" == "DELETE-$n" ]] || return
+  systemctl disable --now "$(service "$n")" || return 1
+  rm -f "/etc/systemd/system/$(service "$n")" "$(state_file "$n")"
+  systemctl daemon-reload
+ fi
+}
 main(){
  for c in ip systemctl modprobe; do command -v "$c" >/dev/null || { echo "Missing $c"; exit 1; }; done
  while true; do
   menu
   printf '%b' "  ${BLUE}›${NC}  "; read -r choice || break
   case "$choice" in
-   1) add || :;; 2) list;; 3) status;; 4) restart;; 5) remove_tunnel;; 6) network_readiness;; 0) return;; *) log 'Invalid choice';;
+   1) select_engine || :;; 2) list; sit_list;; 3) any_status;; 4) any_restart;; 5) any_remove;; 6) network_readiness;; 0) return;; *) log 'Invalid choice';;
   esac
   pause
  done
