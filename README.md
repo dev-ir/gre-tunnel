@@ -2,7 +2,7 @@
 
 **🌐 Language:** **English** | [فارسی](README.fa.md) | [Русский](README.ru.md)
 
-![DVHOST GRE Tunnel terminal interface preview](assets/terminal-preview.svg)
+![DVHOST GRE Tunnel terminal interface preview](assets/terminal-v3-four-engines.svg)
 
 *Illustrative terminal UI preview; server details use example data.*
 
