@@ -223,12 +223,14 @@ sit_next(){
 }
 sit_load(){
  [[ -f "$(sit_state "$1")" ]] || return 1
- unset ROLE LOCAL_PUBLIC REMOTE_PUBLIC LOCAL_SIT REMOTE_SIT SIT_PREFIX
+ unset ROLE LOCAL_PUBLIC REMOTE_PUBLIC LOCAL_SIT REMOTE_SIT SIT_PREFIX SIT_MTU
  source "$(sit_state "$1")"
  [[ ${ROLE:-} =~ ^(iran|foreign)$ ]] &&
  valid_ip "$LOCAL_PUBLIC" && valid_ip "$REMOTE_PUBLIC" &&
  [[ ${SIT_PREFIX:-} =~ ^fd[0-9a-f]{2}(:[0-9a-f]{4}){3}$ ]] &&
- [[ ${LOCAL_SIT:-} == "$SIT_PREFIX::1" || ${LOCAL_SIT:-} == "$SIT_PREFIX::2" ]]
+ [[ ${LOCAL_SIT:-} == "$SIT_PREFIX::1" || ${LOCAL_SIT:-} == "$SIT_PREFIX::2" ]] &&
+ [[ ${REMOTE_SIT:-} == "$SIT_PREFIX::1" || ${REMOTE_SIT:-} == "$SIT_PREFIX::2" ]] &&
+ [[ $LOCAL_SIT != "$REMOTE_SIT" ]]
 }
 sit_prefix_busy(){
  local prefix=$1
@@ -246,7 +248,7 @@ sit_random_prefix(){
  return 1
 }
 sit_add(){
- local n role detected iran foreign lp rp prefix proposed addr peer sf unit
+ local n role detected iran foreign lp rp prefix proposed addr peer sf unit mtu outer_mtu nic answer
  n=$(sit_next) || { log 'No free SIT names'; return 1; }
  log "${BLUE}CREATE SIT $n (IPv6 over IPv4)${NC}"
  read -r -p 'Role [1 Iran / 2 Foreign]: ' role
@@ -268,6 +270,21 @@ sit_add(){
  [[ $prefix =~ ^fd[0-9a-f]{2}(:[0-9a-f]{4}){3}$ ]] || { log "${RED}Invalid IPv6 /64 prefix${NC}"; return 1; }
  sit_prefix_busy "$prefix" && { log "${RED}IPv6 prefix already used locally${NC}"; return 1; }
  preflight "$lp" "$rp" 10.255.255.1 10.255.255.2 || return 1
+ # Subtract the 20-byte outer IPv4 header and select a conservative MTU.
+ nic=$(ip -4 route get "$rp" from "$lp" 2>/dev/null | awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}')
+ outer_mtu=$(ip -4 route get "$rp" from "$lp" 2>/dev/null | awk '{for(i=1;i<=NF;i++)if($i=="mtu"){print $(i+1);exit}}')
+ if [[ ! $outer_mtu =~ ^[0-9]+$ && -n $nic ]]; then
+  outer_mtu=$(cat "/sys/class/net/$nic/mtu" 2>/dev/null || :)
+ fi
+ mtu=1400
+ if [[ $outer_mtu =~ ^[0-9]+$ ]] && ((outer_mtu-20 < mtu)); then mtu=$((outer_mtu-20)); fi
+ ((mtu>=1280)) || { log 'Underlay MTU too small for IPv6 SIT'; return 1; }
+ read -r -p "SIT MTU [$mtu] (1280-1480): " answer
+ mtu=${answer:-$mtu}
+ [[ $mtu =~ ^[0-9]+$ ]] && ((10#$mtu>=1280 && 10#$mtu<=1480)) || { log 'Invalid MTU'; return 1; }
+ if [[ $outer_mtu =~ ^[0-9]+$ ]] && ((10#$mtu > outer_mtu-20)); then
+  log 'MTU exceeds physical-route MTU minus encapsulation overhead'; return 1
+ fi
  if [[ $role == 1 ]]; then addr="$prefix::1"; peer="$prefix::2"
  else addr="$prefix::2"; peer="$prefix::1"; fi
  unit="/etc/systemd/system/$(service "$n")"
@@ -282,8 +299,9 @@ RemainAfterExit=yes
 ExecStartPre=/usr/sbin/modprobe sit
 ExecStart=/usr/bin/ip tunnel add $n mode sit local $lp remote $rp
 ExecStart=/usr/bin/ip -6 addr add $addr/64 dev $n
-ExecStart=/usr/bin/ip link set dev $n mtu 1480 up
+ExecStart=/usr/bin/ip link set dev $n mtu $mtu up
 ExecStop=-/usr/bin/ip tunnel del $n
+ExecStopPost=-/usr/bin/ip tunnel del $n
 TimeoutStartSec=20
 [Install]
 WantedBy=multi-user.target
@@ -297,11 +315,12 @@ EOF
   log "${RED}SIT setup failed; only $n rolled back${NC}"; return 1
  fi
  sf=$(sit_state "$n")
- printf 'ROLE=%s\nLOCAL_PUBLIC=%s\nREMOTE_PUBLIC=%s\nSIT_PREFIX=%s\nLOCAL_SIT=%s\nREMOTE_SIT=%s\n' \
-  "$( [[ $role == 1 ]] && echo iran || echo foreign )" "$lp" "$rp" "$prefix" "$addr" "$peer" > "$sf"
+ printf 'ROLE=%s\nLOCAL_PUBLIC=%s\nREMOTE_PUBLIC=%s\nSIT_PREFIX=%s\nLOCAL_SIT=%s\nREMOTE_SIT=%s\nSIT_MTU=%s\n' \
+  "$( [[ $role == 1 ]] && echo iran || echo foreign )" "$lp" "$rp" "$prefix" "$addr" "$peer" "$mtu" > "$sf"
  chmod 600 "$sf"
  log "${GREEN}Created $n: $addr -> $peer${NC}"
  log "Enter this same IPv6 prefix on the opposite server: $prefix"
+ log "SIT MTU: $mtu"
  log 'SIT uses IPv4 protocol 41. Both endpoints must allow it.'
 }
 sit_list(){
@@ -319,6 +338,8 @@ sit_status(){
  ip -d link show dev "$n" || :
  systemctl --no-pager status "$(service "$n")" | head -n 12 || :
  ping -6 -n -I "$n" -c 4 -W 2 "$REMOTE_SIT" || :
+ log "IPv6 minimum-MTU probe:"
+ ping -6 -n -I "$n" -c 1 -W 2 -s 1232 "$REMOTE_SIT" || :
 }
 sit_remove(){
  local n=$1 confirmation
