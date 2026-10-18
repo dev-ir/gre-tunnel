@@ -22,6 +22,10 @@ SIT sample: Iran `fd12:3456:789a:bcde::1/64` ⇄ Foreign `fd12:3456:789a:bcde::2
 
 **SIT tuning:** The setup now suggests an MTU (normally 1400) capped by the local underlay interface/route MTU minus the 20-byte IPv4 encapsulation header; choose 1280–1480. Different providers may still need a smaller value, and local route MTU is not proof of end-to-end PMTU. The tunnel detail view runs an IPv6 minimum-MTU ping probe. SIT service cleanup was hardened after a failed startup. These changes apply to newly created SIT tunnels; existing units are not silently rewritten.
 
+## Additional engines: IPIP and GRETAP
+
+The tunnel selector now includes **IPIP** (IPv4 encapsulated in IPv4, IP protocol 4) and **GRETAP** (layer-2 Ethernet over GRE, IP protocol 47). They use distinct interface names (`ipip01`, `gtap01`) and per-interface systemd services, with no global Netplan changes. IPIP requests a private IPv4 prefix shared with its opposite endpoint; GRETAP deliberately creates **only an isolated Ethernet device** and never auto-attaches it to an existing bridge, avoiding accidental L2 loops or disruption. Bridge, VLAN and forwarding configuration, when required, must be made separately and carefully. GRETAP does not bypass GRE protocol-47 filtering. Neither engine encrypts traffic. Validate with `bash -n` and test on staging before use; these additions have not been field-tested.
+
 ## What's changed
 
 - New per-tunnel systemd oneshot units (`dvhost-gre-v3-greXX.service`)
