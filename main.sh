@@ -43,6 +43,15 @@ next_name(){
  done
  return 1
 }
+# Prevent ambiguous inbound matching for unkeyed tunnel types.
+endpoint_pair_busy(){
+ local engine=$1 lp=$2 rp=$3 f
+ for f in "$BASE"/"$engine"[0-9][0-9].conf "$BASE"/"$engine"[0-9][0-9][0-9].conf; do
+  [[ -f "$f" ]] || continue
+  if grep -Fxq "LOCAL_PUBLIC=$lp" "$f" && grep -Fxq "REMOTE_PUBLIC=$rp" "$f"; then return 0; fi
+ done
+ return 1
+}
 local_ip(){
  ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++)if($i=="src"){print $(i+1);exit}}'
 }
@@ -144,6 +153,7 @@ add(){
  prefix_busy "$prefix" && { log 'Subnet already in use'; return 1; }
  if [[ $role == 1 ]]; then a="$prefix.1"; b="$prefix.2"; else a="$prefix.2"; b="$prefix.1"; fi
  preflight "$lp" "$rp" "$a" "$b" || return 1
+ endpoint_pair_busy gre "$lp" "$rp" && { log "GRE endpoints already configured; select another peer or remove the duplicate."; return 1; }
  file=$(state_file "$n")
  write_service "$n" "$lp" "$rp" "$a" "$b"
  # No global netplan apply; rollback only this newly created unit.
@@ -276,6 +286,7 @@ sit_add(){
  [[ $prefix =~ ^fd[0-9a-f]{2}(:[0-9a-f]{4}){3}$ ]] || { log "${RED}Invalid IPv6 /64 prefix${NC}"; return 1; }
  sit_prefix_busy "$prefix" && { log "${RED}IPv6 prefix already used locally${NC}"; return 1; }
  preflight "$lp" "$rp" 10.255.255.1 10.255.255.2 || return 1
+ endpoint_pair_busy sit "$lp" "$rp" && { log "SIT endpoints already configured."; return 1; }
  # Subtract the 20-byte outer IPv4 header and select a conservative MTU.
  nic=$(ip -4 route get "$rp" from "$lp" 2>/dev/null | awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}')
  outer_mtu=$(ip -4 route get "$rp" from "$lp" 2>/dev/null | awk '{for(i=1;i<=NF;i++)if($i=="mtu"){print $(i+1);exit}}')
@@ -408,6 +419,9 @@ extra_create(){
  fi
  valid_ip "$lp" && valid_ip "$rp" && [[ $lp != "$rp" ]] || { log 'Invalid endpoints'; return 1; }
  preflight "$lp" "$rp" 10.255.255.1 10.255.255.2 || return 1
+ if [[ $type == ipip ]] && endpoint_pair_busy ipip "$lp" "$rp"; then
+  log "IPIP endpoints already configured; duplicate unkeyed outer endpoints would conflict."; return 1
+ fi
  a= b=
  if [[ $type == ipip ]]; then
   if [[ $role == 1 ]]; then
