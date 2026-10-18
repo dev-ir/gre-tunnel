@@ -14,6 +14,12 @@ Menu **6 — Iran-access readiness / path diagnostics** checks the public route 
 
 **Recommended deployment:** use at least two foreign endpoints on independent providers/networks, maintain a separately reachable management channel, and make the application layer capable of choosing a healthy tunnel. **GRE alone cannot prevent domestic-only connectivity or restore international paths when all outbound routes are blocked.** Automatic failover of application traffic is not implemented in this version.
 
+## Tunnel engine selector: GRE and SIT
+
+Menu **1 — Create tunnel** now offers **GRE (IPv4 over GRE, IP protocol 47)** or **SIT (IPv6 over IPv4, IP protocol 41)**. SIT creates independent `sit01`, `sit02`, etc. devices with a randomly suggested ULA `/64` prefix on the Iran side; enter that **same prefix** on the foreign side. GRE uses separate `greXX` devices. Both engines have individual systemd units and can be listed, inspected, restarted, and removed independently.
+
+SIT sample: Iran `fd12:3456:789a:bcde::1/64` ⇄ Foreign `fd12:3456:789a:bcde::2/64`. Allow IP protocol **41**, not UDP/TCP port 41. It carries IPv6 only and does **not** provide IPv4 tunnel addresses, encryption, or guaranteed reachability under filtering. No GRE-to-SIT application failover is implemented.
+
 ## What's changed
 
 - New per-tunnel systemd oneshot units (`dvhost-gre-v3-greXX.service`)
