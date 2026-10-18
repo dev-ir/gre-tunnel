@@ -14,7 +14,7 @@ valid_ip(){
  IFS=. read -r a b c d <<< "$1"
  for x in "$a" "$b" "$c" "$d"; do [[ $x =~ ^(0|[1-9][0-9]*)$ ]] || return 1; ((10#$x<=255)) || return 1; done
 }
-valid_name(){ [[ $1 =~ ^(gre[0-9]{2,3}|sit[0-9]{2})$ && $1 != gre0858 ]]; }
+valid_name(){ [[ $1 =~ ^(gre[0-9]{2,3}|sit[0-9]{2}|ipip[0-9]{2}|gtap[0-9]{2})$ && $1 != gre0858 ]]; }
 state_file(){ printf '%s/%s.conf' "$BASE" "$1"; }
 service(){ printf 'dvhost-gre-v3-%s.service' "$1"; }
 load(){
@@ -59,6 +59,12 @@ prefix_busy(){
   load "$n" || continue
   [[ ${LOCAL_GRE%.*} == "$p" ]] && return 0
  done < <(names)
+ # Include configured but currently inactive IPIP tunnels.
+ local f
+ for f in "$BASE"/ipip[0-9][0-9].conf; do
+  [[ -f "$f" ]] || continue
+  grep -Fq "LOCAL_TUN=$p." "$f" && return 0
+ done
  # Inspect all currently configured IPv4 addresses, including unmanaged tunnels.
  ip -o -4 addr show | awk '{print $4}' | grep -Eq "^$p[.][12]/" && return 0
  # Avoid matching existing GRE /30 subnets elsewhere in system configuration.
@@ -603,7 +609,7 @@ select_engine(){
 }
 any_pick(){
  local n
- read -r -p 'Tunnel name (gre01 / sit01): ' n
+ read -r -p 'Tunnel name (gre01 / sit01 / ipip01 / gtap01): ' n
  valid_name "$n" && [[ -f "$(state_file "$n")" ]] || { log 'Unknown managed tunnel' >&2; return 1; }
  echo "$n"
 }
