@@ -371,7 +371,8 @@ extra_next(){
  for ((i=1;i<=99;i++)); do
   printf -v n '%s%02d' "$type" "$i"
   if [[ ! -e "$(state_file "$n")" && ! -e "/etc/systemd/system/$(service "$n")" ]] &&
-     ! ip link show dev "$n" >/dev/null 2>&1; then
+     ! ip link show dev "$n" >/dev/null 2>&1 &&
+     ! grep -RqlF "$n:" /etc/netplan /etc/systemd/network 2>/dev/null; then
    echo "$n"; return
   fi
  done
@@ -480,7 +481,7 @@ extra_create(){
  chmod 600 "$state"
  log "${GREEN}Created $n ($descriptor); MTU $mtu${NC}"
  [[ $type == ipip ]] && log "Tunnel peers: $a / $b. Both hosts must use the same prefix."
- [[ $type == gtap ]] && log "GRETAP key: $key (must match on peer)"
+ if [[ $type == gtap ]]; then log "GRETAP key: $key (must match on peer)"; fi
  log "Permit protocol $( [[ $type == ipip ]] && echo 4 || echo 47 ) at both ends."
 }
 extra_list(){
@@ -576,8 +577,12 @@ header(){
  IFS='|' read -r country isp <<< "$info"
  while IFS= read -r n; do
   ((total+=1))
-  systemctl is-active --quiet "$(service "$n")" && ((active+=1))
+  if systemctl is-active --quiet "$(service "$n")"; then ((active+=1)); fi
  done < <(names)
+ for n in $(sit_names) $(extra_names ipip) $(extra_names gtap); do
+  ((total+=1))
+  if systemctl is-active --quiet "$(service "$n")"; then ((active+=1)); fi
+ done
  printf '\n'
  log "${BLUE}  ╭────────────────────────────────────────────────────────────╮${NC}"
  log "${BLUE}  │${NC}  ${GREEN}DVHOST${NC} / ${BOLD}GRE TUNNEL${NC}                     ${DIM}version $VERSION${NC}  ${BLUE}│${NC}"
@@ -585,7 +590,7 @@ header(){
  printf '  %-19s %s\n' 'Server Country   |' "${country:-Unknown}"
  printf '  %-19s %s\n' 'Server ISP       |' "${isp:-Unknown}"
  printf '  %-19s %s\n' 'Server IP        |' "${ip:-Unknown}"
- printf '  %-19s %s\n' 'GRE Tunnel       |' "$active / $total active"
+ printf '  %-19s %s\n' 'All Tunnels      |' "$active / $total active"
  printf '  %-19s %s\n' 'SIT Tunnel       |' "$(sit_names | wc -l) configured"
  printf '  %-19s %s\n' 'IPIP Tunnel      |' "$(extra_names ipip | wc -l) configured"
  printf '  %-19s %s\n' 'GRETAP Tunnel    |' "$(extra_names gtap | wc -l) configured"
