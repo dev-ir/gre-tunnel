@@ -2,7 +2,7 @@
 
 **🌐 Язык:** [English](README.md) | [فارسی](README.fa.md) | **Русский**
 
-![Предпросмотр терминального интерфейса GRE Tunnel](assets/terminal-preview.svg)
+![Предпросмотр терминального интерфейса GRE Tunnel](assets/terminal-v3-four-engines.svg)
 
 *Это иллюстрация интерфейса; данные сервера приведены только для примера.*
 
