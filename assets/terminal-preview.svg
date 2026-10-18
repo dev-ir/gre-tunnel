@@ -1,29 +1,33 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="920" height="665" viewBox="0 0 920 665">
-<rect width="920" height="665" rx="18" fill="#0c1321"/>
-<rect x="1" y="1" width="918" height="663" rx="17" fill="none" stroke="#27384e" stroke-width="2"/>
-<rect x="0" y="0" width="920" height="48" rx="18" fill="#182334"/>
-<rect x="0" y="26" width="920" height="22" fill="#182334"/>
-<circle cx="25" cy="24" r="7" fill="#f87171"/><circle cx="47" cy="24" r="7" fill="#fbbf24"/><circle cx="69" cy="24" r="7" fill="#4ade80"/>
-<text x="460" y="30" font-family="monospace" font-size="14" fill="#91a6c2" text-anchor="middle">DVHOST • GRE Tunnel</text>
-<g font-family="DejaVu Sans Mono,monospace" font-size="19">
-<rect x="32" y="74" width="856" height="239" rx="11" fill="#101e2e" stroke="#4677c5" stroke-width="1.5"/>
-<text x="54" y="112" fill="#4ade80" font-weight="bold">DVHOST</text><text x="137" y="112" fill="#dde9fa" font-weight="bold"> / GRE TUNNEL</text>
-<text x="850" y="112" fill="#93a9c5" text-anchor="end" font-size="16">version 3.0.0</text>
-<line x1="32" y1="132" x2="888" y2="132" stroke="#4677c5"/>
-<g fill="#a9bfdc">
-<text x="55" y="167">Server Country</text><text x="278" y="167">|</text><text x="302" y="167" fill="#e5edf7">Finland</text>
-<text x="55" y="202">Server ISP</text><text x="278" y="202">|</text><text x="302" y="202" fill="#e5edf7">Hetzner Online GmbH</text>
-<text x="55" y="237">Server IP</text><text x="278" y="237">|</text><text x="302" y="237" fill="#4ade80">203.0.113.21</text>
-<text x="55" y="272">GRE Tunnel</text><text x="278" y="272">|</text><text x="302" y="272" fill="#4ade80">2 / 2 active</text>
-</g>
-<text x="41" y="356" fill="#60a5fa" font-weight="bold" font-size="17">TUNNEL MANAGEMENT</text>
-<line x1="39" y1="371" x2="880" y2="371" stroke="#31425c"/>
-<g fill="#4ade80"><text x="48" y="406">[ 1 ]</text><text x="48" y="441">[ 2 ]</text><text x="48" y="476">[ 3 ]</text></g>
-<g fill="#d8e5f5"><text x="142" y="406">Create independent GRE tunnel</text><text x="142" y="441">List GRE tunnels</text><text x="142" y="476">Tunnel details &amp; connectivity</text></g>
-<text x="41" y="522" fill="#60a5fa" font-weight="bold" font-size="17">OPERATIONS</text>
-<line x1="39" y1="535" x2="880" y2="535" stroke="#31425c"/>
-<text x="48" y="566" fill="#4ade80">[ 4 ]</text><text x="142" y="566" fill="#d8e5f5">Restart selected GRE</text>
-<text x="48" y="597" fill="#fb7185">[ 5 ]</text><text x="142" y="597" fill="#d8e5f5">Remove selected GRE</text>
-<text x="48" y="639" fill="#8ea6c2">[ 0 ] Exit</text><text x="858" y="639" fill="#8ea6c2" text-anchor="end">t.me/dvhost_cloud</text>
-</g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1230" viewBox="0 0 1000 1230">
+<rect width="1000" height="1230" fill="#001b2d"/>
+<g font-family="DejaVu Sans Mono, Consolas, monospace" font-size="23" fill="#d8e7ff">
+<rect x="55" y="39" width="890" height="337" rx="7" stroke="#75afff" fill="none" stroke-width="2"/>
+<path d="M55 100 H945" stroke="#75afff" stroke-width="2"/>
+<text x="90" y="81" fill="#00f587" font-weight="bold" font-size="27">DVHOST</text><text x="232" y="81" font-weight="bold" font-size="27">/ GRE TUNNEL</text><text x="685" y="81" fill="#8da8c7">version 3.0.0</text>
+<g font-size="23">
+<text x="90" y="146">Server Country</text><text x="333" y="146" fill="#79aefa">|</text><text x="376" y="146">Germany</text>
+<text x="90" y="182">Server ISP</text><text x="333" y="182" fill="#79aefa">|</text><text x="376" y="182">YottaSrc</text>
+<text x="90" y="218">Server IP</text><text x="333" y="218" fill="#79aefa">|</text><text x="376" y="218" fill="#ff4c99">204.11.2.118</text>
+<text x="90" y="254">GRE Tunnel</text><text x="333" y="254" fill="#79aefa">|</text><text x="376" y="254">0 / 0 active</text>
+<text x="90" y="290">SIT Tunnel</text><text x="333" y="290" fill="#79aefa">|</text><text x="376" y="290">0 configured</text>
+<text x="90" y="326">IPIP Tunnel</text><text x="333" y="326" fill="#79aefa">|</text><text x="376" y="326">0 configured</text>
+<text x="90" y="362">GRETAP Tunnel</text><text x="333" y="362" fill="#79aefa">|</text><text x="376" y="362">0 configured</text></g>
+<g stroke="#71adff" stroke-width="1.5"><path d="M55 413 H945"/><path d="M55 581 H945"/><path d="M55 741 H945"/><path d="M55 859 H945"/></g>
+<g fill="#73a9ff" font-size="24" font-weight="bold"><text x="55" y="459">TUNNEL MANAGEMENT</text><text x="55" y="625">OPERATIONS</text><text x="55" y="785">CONNECTIVITY</text><text x="55" y="997">TUNNEL ENGINE</text></g>
+<g font-size="23">
+<text x="55" y="502" fill="#00e78c">[ 1 ]</text><text x="155" y="502">Create tunnel</text>
+<text x="55" y="538" fill="#00e78c">[ 2 ]</text><text x="155" y="538">List all tunnels</text>
+<text x="55" y="574" fill="#00e78c">[ 3 ]</text><text x="155" y="574">Tunnel details &amp; connectivity</text>
+<text x="55" y="670" fill="#00e78c">[ 4 ]</text><text x="155" y="670">Restart selected tunnel</text>
+<text x="55" y="709" fill="#ff4d65">[ 5 ]</text><text x="155" y="709">Remove selected tunnel</text>
+<text x="55" y="826" fill="#00e78c">[ 6 ]</text><text x="155" y="826">Iran-access readiness / path diagnostics</text>
+<text x="55" y="900" fill="#7090ae">[ 0 ] Exit</text><text x="655" y="900" fill="#7090ae">t.me/dvhost_cloud</text>
+<text x="55" y="935" fill="#7090ae">Existing v2 tunnels remain untouched.</text>
+<text x="55" y="967" fill="#73a9ff">›</text><text x="90" y="967">1</text>
+<text x="55" y="1037">[ 1 ] GRE - IPv4 over GRE (protocol 47)</text>
+<text x="55" y="1074">[ 2 ] SIT - IPv6 over IPv4 (protocol 41)</text>
+<text x="55" y="1111">[ 3 ] IPIP - IPv4 over IPv4 (protocol 4)</text>
+<text x="55" y="1148">[ 4 ] GRETAP - Ethernet over GRE (protocol 47)</text>
+<text x="55" y="1185">[ 0 ] Back</text>
+<text x="55" y="1215">Select:</text>
+</g></g></svg>
