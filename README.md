@@ -1,53 +1,34 @@
-# DVHOST GRE Tunnel v2.0.1
+# DVHOST GRE Tunnel v3.0.0 (Experimental)
 
-Multi-tunnel GRE manager for Ubuntu with Netplan and systemd.
+**New architecture**: one Iran server can maintain independent GRE tunnels to multiple foreign servers. This is a development branch; use a staging VM before production.
 
-## Stability improvements in v2.0.1
-- MTU 1400 for new GRE interfaces to reduce fragmentation risk (not a universal MTU guarantee)
-- Peer ICMP reachability checks to distinguish active interface from a responding remote endpoint
-- Restart selected interface without globally applying Netplan when already present
-- Keepalive pacing of 15 seconds instead of 5 seconds
-- Stricter IPv4 validation
+## What's changed
 
-ICMP health checks can be false negatives if the remote host blocks ping. Running Netplan on creation or removal still affects the host networking stack; use console access and backups.
+- New per-tunnel systemd oneshot units (`dvhost-gre-v3-greXX.service`)
+- Runtime operations via `ip tunnel`; **no global `netplan apply`**
+- Each new tunnel gets its own private /30 and unit
+- Preflight verifies selected public IPv4 belongs to this server and can route to the foreign endpoint
+- Detects names already used by v2, and checks selected local subnet
+- Rolls back only a new tunnel when creation/persistence fails
+- Existing v2 files and units are not altered
 
-## Per-tunnel quality monitoring
-
-Use menu **8 — Install / Upgrade Monitoring** once on servers that already have GRE tunnels. Menu **7 — Tunnel Quality / Health** displays the latest packet-loss percentage, average ICMP RTT in milliseconds, and `UP`, `DEGRADED`, `DOWN`, `STALE` or `UNKNOWN` state for every managed interface. Monitoring runs every ~17–25 seconds (five probes plus a 15-second gap), requires successful peer ICMP responses, and detects `DOWN` after three consecutive fully lost batches. The most recent sample is stored under `/run/dvhost-gre/greXX.status` and is cleared on reboot. This is an **ICMP reachability indicator**, not throughput/jitter measurement; blocking ping can produce apparent outages. Each monitor runs as an independent systemd service. No automatic network reset or tunnel reconfiguration occurs on probe failure.
-
-## Features
-- Multiple independent GRE tunnels (gre01, gre02, ...)
-- Separate Netplan and keepalive service for each tunnel
-- List, check, restart, edit public IPs, and delete an individual tunnel
-- Existing legacy gre0858 configuration remains untouched
-
-## Install
-
-Run on **both** Iran and foreign servers:
+## Run
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/dev-ir/gre-tunnel/v2.0.1/main.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/dev-ir/gre-tunnel/v3.0.0/main.sh)
 ```
 
-Choose **Add GRE Tunnel**. Set the Iran and foreign public IPv4 addresses identically on both hosts, selecting the corresponding role (Iran/Foreign). Use the **same unique private GRE subnet prefix** (for example, `10.50.1`) on both hosts. For a second foreign server, create another tunnel on the Iran server with a **different subnet**, for example `10.50.2`.
+Requirements: Linux, root, systemd, `iproute2`, `modprobe`. Protocol 47 (GRE) must be permitted.
 
-Open **IP protocol 47 (GRE)** on both servers and any provider firewalls. GRE is not encrypted. Avoid running Netplan changes over SSH without console recovery access.
+To add the same GRE on both ends, use the identical subnet prefix, set Iran/Foreign roles respectively, and reverse the endpoints. Interface names may differ across hosts.
 
-## Examples
+## Important limitations
 
-| Node | Interface | Local tunnel IPv4 | Peer tunnel IPv4 |
-| --- | --- | --- | --- |
-| Iran → Germany | gre01 | 10.50.1.1/30 | 10.50.1.2 |
-| Germany → Iran | gre01 | 10.50.1.2/30 | 10.50.1.1 |
-| Iran → Finland | gre02 | 10.50.2.1/30 | 10.50.2.2 |
-| Finland → Iran | gre01 | 10.50.2.2/30 | 10.50.2.1 |
-
-Interface names are **local to each server** and may differ. Keep the corresponding subnet and public endpoint pair consistent.
-
-## Compatibility
-
-v2.0.1 stores configs under `/etc/dvhost-gre/`, Netplan definitions in `/etc/netplan/90-dvhost-greXX.yaml`, and keepalive units as `dvhost-gre-greXX.service`. It does not migrate or modify the old `gre0858` tunnel.
-
-## Support
+- New v3 tunnels persist as dedicated systemd units and are started after network-online at boot. Their unit definitions are not managed by Netplan.
+- The v3 UI does **not** import or delete v2 tunnels. Upgrade/migration remains a separate, future action.
+- Adding new GRE may still impact host routing if existing manual routes or external software conflict; test before deployment.
+- The initial v3 engine is not yet validated on the user's production servers. Monitoring, log history, controlled recovery, and ISP/country detection are follow-up development items.
+- GRE is **not encrypted**. Confirm security requirements and firewall configuration.
+- The systemd unit uses `/usr/sbin/ip`; confirm the binary path on the distribution before production rollout.
 
 Telegram: https://t.me/dvhost_cloud
