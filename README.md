@@ -8,6 +8,12 @@
 
 **New architecture**: one Iran server can maintain independent GRE tunnels to multiple foreign servers. This is a development branch; use a staging VM before production.
 
+## Iran-access resilience and path diagnostics
+
+Menu **6 — Iran-access readiness / path diagnostics** checks the public route toward each peer, GRE peer ICMP reachability, direct public-peer ICMP, DNS resolution, and an external HTTPS probe. It is **read-only**: it does not restart interfaces or modify routing or firewall rules. This helps differentiate local failures from multi-path external reachability problems, but cannot conclusively classify an outage. ICMP can be blocked independently of data traffic.
+
+**Recommended deployment:** use at least two foreign endpoints on independent providers/networks, maintain a separately reachable management channel, and make the application layer capable of choosing a healthy tunnel. **GRE alone cannot prevent domestic-only connectivity or restore international paths when all outbound routes are blocked.** Automatic failover of application traffic is not implemented in this version.
+
 ## What's changed
 
 - New per-tunnel systemd oneshot units (`dvhost-gre-v3-greXX.service`)
