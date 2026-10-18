@@ -287,7 +287,7 @@ sit_add(){
  ((mtu>=1280)) || { log 'Underlay MTU too small for IPv6 SIT'; return 1; }
  read -r -p "SIT MTU [$mtu] (1280-1480): " answer
  mtu=${answer:-$mtu}
- [[ $mtu =~ ^[0-9]+$ ]] && ((10#$mtu>=1280 && 10#$mtu<=1480)) || { log 'Invalid MTU'; return 1; }
+ [[ $mtu =~ ^(12[8-9][0-9]|1[3-4][0-9][0-9])$ ]] && ((10#$mtu<=1480)) || { log 'Invalid MTU'; return 1; }
  if [[ $outer_mtu =~ ^[0-9]+$ ]] && ((10#$mtu > outer_mtu-20)); then
   log 'MTU exceeds physical-route MTU minus encapsulation overhead'; return 1
  fi
@@ -383,13 +383,14 @@ extra_load(){
  unset TYPE ROLE LOCAL_PUBLIC REMOTE_PUBLIC LOCAL_TUN REMOTE_TUN MTU
  source "$(state_file "$n")"
  [[ $TYPE == ipip || $TYPE == gtap ]] &&
+ [[ $TYPE == ${n%%[0-9]*} || ( $TYPE == gtap && $n == gtap* ) ]] &&
  valid_ip "$LOCAL_PUBLIC" && valid_ip "$REMOTE_PUBLIC" &&
  [[ $LOCAL_PUBLIC != "$REMOTE_PUBLIC" ]] &&
  [[ $MTU =~ ^[0-9]+$ ]] && ((10#$MTU>=1280 && 10#$MTU<=1480)) || return 1
  if [[ $TYPE == ipip ]]; then valid_ip "$LOCAL_TUN" && valid_ip "$REMOTE_TUN"; fi
 }
 extra_create(){
- local type=$1 n role detected iran foreign lp rp prefix a b mtu under nic answer mod ipbin unit state descriptor
+ local type=$1 n role detected iran foreign lp rp prefix a b mtu under nic answer mod ipbin unit state descriptor key existing
  n=$(extra_next "$type") || { log 'No free interface name'; return 1; }
  log "${BLUE}CREATE ${type^^}: $n${NC}"
  read -r -p 'Role [1 Iran / 2 Foreign]: ' role
@@ -420,7 +421,20 @@ extra_create(){
   prefix_busy "$prefix" && { log 'IPv4 subnet already in use'; return 1; }
   if [[ $role == 1 ]]; then a="$prefix.1"; b="$prefix.2"; else a="$prefix.2"; b="$prefix.1"; fi
  else
-  log 'GRETAP creates only an isolated Ethernet interface; bridge attachment is manual.'
+  log 'GRETAP creates an isolated Ethernet interface; bridge attachment is manual.'
+  if [[ $role == 1 ]]; then
+   key=$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')
+   ((key>0)) || key=1
+   read -r -p "GRETAP GRE key [$key] (use same key on peer): " answer
+   key=${answer:-$key}
+  else
+   read -r -p 'GRETAP GRE key from Iran: ' key
+  fi
+  [[ $key =~ ^[1-9][0-9]{0,9}$ ]] && ((10#$key<=4294967295)) || { log 'Invalid GRE key'; return 1; }
+  for existing in "$BASE"/gtap[0-9][0-9].conf; do
+   [[ -f $existing ]] || continue
+   grep -Fxq "GRE_KEY=$key" "$existing" && { log 'GRE key already configured on this host'; return 1; }
+  done
  fi
  nic=$(ip -4 route get "$rp" from "$lp" 2>/dev/null | awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}')
  under=$(cat "/sys/class/net/$nic/mtu" 2>/dev/null || echo 1500)
@@ -449,7 +463,7 @@ extra_create(){
    printf 'ExecStart=%s tunnel add %s mode ipip local %s remote %s\n' "$ipbin" "$n" "$lp" "$rp"
    printf 'ExecStart=%s addr add %s/30 dev %s\n' "$ipbin" "$a" "$n"
   else
-   printf 'ExecStart=%s link add %s type gretap local %s remote %s\n' "$ipbin" "$n" "$lp" "$rp"
+   printf 'ExecStart=%s link add %s type gretap local %s remote %s key %s\n' "$ipbin" "$n" "$lp" "$rp" "$key"
   fi
   printf 'ExecStart=%s link set dev %s mtu %s up\n' "$ipbin" "$n" "$mtu"
   printf 'ExecStop=-%s link del dev %s\nExecStopPost=-%s link del dev %s\nTimeoutStartSec=20\n[Install]\nWantedBy=multi-user.target\n' "$ipbin" "$n" "$ipbin" "$n"
@@ -461,11 +475,12 @@ extra_create(){
   rm -f "$unit"; systemctl daemon-reload
   log "${RED}Setup failed; rolled back only $n${NC}"; return 1
  fi
- printf 'TYPE=%q\nROLE=%q\nLOCAL_PUBLIC=%q\nREMOTE_PUBLIC=%q\nLOCAL_TUN=%q\nREMOTE_TUN=%q\nMTU=%q\n' \
-  "$type" "$( [[ $role == 1 ]] && echo iran || echo foreign )" "$lp" "$rp" "$a" "$b" "$mtu" > "$state"
+ printf 'TYPE=%q\nROLE=%q\nLOCAL_PUBLIC=%q\nREMOTE_PUBLIC=%q\nLOCAL_TUN=%q\nREMOTE_TUN=%q\nMTU=%q\nGRE_KEY=%q\n' \
+  "$type" "$( [[ $role == 1 ]] && echo iran || echo foreign )" "$lp" "$rp" "$a" "$b" "$mtu" "${key:-}" > "$state"
  chmod 600 "$state"
  log "${GREEN}Created $n ($descriptor); MTU $mtu${NC}"
  [[ $type == ipip ]] && log "Tunnel peers: $a / $b. Both hosts must use the same prefix."
+ [[ $type == gtap ]] && log "GRETAP key: $key (must match on peer)"
  log "Permit protocol $( [[ $type == ipip ]] && echo 4 || echo 47 ) at both ends."
 }
 extra_list(){
@@ -581,7 +596,7 @@ menu(){
  header
  ui_rule
  ui_section 'TUNNEL MANAGEMENT'
- ui_option 1 'Create tunnel (GRE / SIT / IPIP / GRETAP)'
+ ui_option 1 'Create tunnel'
  ui_option 2 'List all tunnels'
  ui_option 3 'Tunnel details & connectivity'
  ui_rule
