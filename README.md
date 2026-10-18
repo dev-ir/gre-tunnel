@@ -1,5 +1,9 @@
 # DVHOST GRE Tunnel v3.0.0 (Experimental)
 
+![DVHOST GRE Tunnel terminal interface preview](assets/terminal-preview.svg)
+
+*Illustrative terminal UI preview; server details use example data.*
+
 **New architecture**: one Iran server can maintain independent GRE tunnels to multiple foreign servers. This is a development branch; use a staging VM before production.
 
 ## What's changed
@@ -27,8 +31,9 @@ To add the same GRE on both ends, use the identical subnet prefix, set Iran/Fore
 - New v3 tunnels persist as dedicated systemd units and are started after network-online at boot. Their unit definitions are not managed by Netplan.
 - The v3 UI does **not** import or delete v2 tunnels. Upgrade/migration remains a separate, future action.
 - Adding new GRE may still impact host routing if existing manual routes or external software conflict; test before deployment.
+- Country and ISP in the terminal header are best-effort, fetched from an external IP information service and cached for 24 hours. The header's IP is derived from the local route.
 - The initial v3 engine is not yet validated on the user's production servers. Monitoring, log history, controlled recovery, and ISP/country detection are follow-up development items.
 - GRE is **not encrypted**. Confirm security requirements and firewall configuration.
-- The systemd unit uses `/usr/sbin/ip`; confirm the binary path on the distribution before production rollout.
+- The systemd unit currently uses `/usr/bin/ip`; confirm the binary path on the distribution before production rollout.
 
 Telegram: https://t.me/dvhost_cloud
