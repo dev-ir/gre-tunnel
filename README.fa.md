@@ -2,7 +2,7 @@
 
 **🌐 زبان‌ها:** [English](README.md) | **فارسی** | [Русский](README.ru.md)
 
-![پیش‌نمایش محیط GRE Tunnel](assets/terminal-preview.svg)
+![پیش‌نمایش محیط GRE Tunnel](assets/terminal-v3-four-engines.svg)
 
 *تصویر بالا پیش‌نمایش طراحی است و اطلاعات سرور نمونه هستند.*
 
